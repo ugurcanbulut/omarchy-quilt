@@ -1,0 +1,179 @@
+#!/bin/bash
+
+# Quilt: tile layout presets for Hyprland, driven from the Omarchy bar.
+#
+#   quilt set <spec>         use a preset on the active workspace: 4|8, 3|6|3:2,
+#                            smart, dwindle, scrolling, monocle, or off
+#   quilt next | prev        cycle through the presets
+#   quilt grow | shrink      widen or narrow the focused window's column
+#   quilt mirror             flip the layout left to right
+#   quilt main               swap the focused window into the main tile
+#   quilt move <n|empty>     move the focused window to tile n, or the first empty one
+#   quilt target <n> [ws]    open the app launcher; the new app goes to tile n
+#   quilt status             print the active workspace's preset as JSON
+#   quilt load               load the layout engine (the bar does this itself)
+#
+# A spec lists column widths on a 10- or 12-column grid; ":n" splits a column
+# into n stacked tiles. QUILT_WORKSPACE overrides the workspace to act on.
+
+set -uo pipefail
+
+DIR=$(dirname "$(readlink -f "$0")")
+ID=ugurcanbulut.quilt
+SHELL_CONFIG="$HOME/.config/omarchy/shell.json"
+
+usage() {
+  sed -n '5,15p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 1
+}
+
+notify() {
+  if command -v notify-send >/dev/null; then
+    notify-send -a Quilt "Quilt" "$1"
+  else
+    echo "quilt: $1" >&2
+  fi
+}
+
+check_requirements() {
+  local tool
+  for tool in hyprctl jq; do
+    command -v "$tool" >/dev/null || { notify "Missing required program: $tool"; exit 1; }
+  done
+  if [[ $(hyprctl dispatch 'hl.dsp.no_op()' 2>/dev/null) != ok ]]; then
+    notify "Quilt needs Hyprland with the Lua config (Hyprland 0.55 or newer)"
+    exit 1
+  fi
+}
+
+# The active workspace, named the way the engine names it.
+workspace_key() {
+  if [[ -n ${QUILT_WORKSPACE:-} ]]; then
+    echo "$QUILT_WORKSPACE"
+    return
+  fi
+  hyprctl activeworkspace -j | jq -r '
+    if .id > 0 then (.id | tostring)
+    elif (.name | startswith("special:")) then .name
+    else "name:" + .name end'
+}
+
+lua_string() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/\\\\/\\\\\\\\/g; s/'/\\\\'/g")"
+}
+
+# Run Lua inside Hyprland; repl prints what the code returns.
+lua() {
+  hyprctl repl "$1" 2>&1
+}
+
+load() {
+  local result
+  # The leading statement keeps hyprctl from reading the file's first
+  # comment ("--") as a command-line flag.
+  result=$(hyprctl eval "local _quilt = true
+$(cat "$DIR/engine.lua")")
+  [[ $result == ok ]] || { notify "Couldn't load the layout engine: $result"; exit 1; }
+  result=$(lua 'return quilt.load()')
+  [[ $result == ok ]] || { notify "Couldn't start Quilt: $result"; exit 1; }
+}
+
+ensure_loaded() {
+  [[ $(lua 'return quilt ~= nil and quilt.loaded == true') == true ]] || load
+}
+
+# Call an engine function with Lua arguments; report anything but "ok".
+call() {
+  local result args
+  ensure_loaded
+  args=$(IFS=,; echo "${*:2}")
+  result=$(lua "return quilt.$1($args)")
+  [[ $result == ok ]] || { notify "$result"; return 1; }
+}
+
+# The Quilt entry in the bar layout, for custom presets.
+widget_settings() {
+  jq -c --arg id "$ID" 'first(.bar.layout[]?[]? | select(.id == $id)) // {}' "$SHELL_CONFIG" 2>/dev/null || echo '{}'
+}
+
+# Built-in presets (only the adaptive ones with builtInPresets: false), then
+# the user's own.
+presets() {
+  local settings
+  settings=$(widget_settings)
+  jq -r --argjson builtin "$(jq '.builtInPresets != false' <<<"$settings")" \
+    '.sections[] | select($builtin or .title == "ADAPTIVE") | .presets[].spec' "$DIR/presets.json"
+  jq -r '.presets[]? | if type == "string" then . else .spec end' <<<"$settings"
+}
+
+current_spec() {
+  ensure_loaded
+  lua "local s = quilt.state.workspaces[$(lua_string "$(workspace_key)")] return s and s.spec or ''"
+}
+
+set_spec() {
+  local spec=$1 gaps_in=${2:-} gaps_out=${3:-}
+  spec=${spec// /}
+  [[ $spec =~ ^(smart|dwindle|scrolling|monocle|off|[0-9]+(:[0-9]+)?(\|[0-9]+(:[0-9]+)?)*)$ ]] || {
+    notify "\"$1\" isn't a preset Quilt understands"
+    exit 1
+  }
+  # Custom presets can carry their own gaps.
+  if [[ -z $gaps_in && -z $gaps_out ]]; then
+    read -r gaps_in gaps_out < <(jq -r --arg spec "$spec" '
+      first(.presets[]? | objects | select((.spec | gsub(" "; "")) == $spec)) // {} | "\(.gapsIn // "") \(.gapsOut // "")"' <<<"$(widget_settings)")
+  fi
+  [[ -z $gaps_in || $gaps_in =~ ^[0-9]+$ ]] || gaps_in=""
+  [[ -z $gaps_out || $gaps_out =~ ^[0-9]+$ ]] || gaps_out=""
+  call set "$(lua_string "$(workspace_key)")" "$(lua_string "$spec")" "${gaps_in:-nil}" "${gaps_out:-nil}"
+}
+
+cycle() {
+  local step=$1 current list i count
+  current=$(current_spec)
+  mapfile -t list < <(presets)
+  count=${#list[@]}
+  ((count > 0)) || exit 1
+  for ((i = 0; i < count; i++)); do
+    [[ ${list[i]// /} == "$current" ]] && break
+  done
+  if ((i == count)); then
+    i=$((step > 0 ? 0 : count - 1))
+  else
+    i=$(((i + step + count) % count))
+  fi
+  set_spec "${list[i]}"
+}
+
+check_requirements
+
+case ${1:-} in
+load) load ;;
+set) [[ -n ${2:-} ]] || usage; set_spec "$2" "${3:-}" "${4:-}" ;;
+off) set_spec off ;;
+next) cycle 1 ;;
+prev) cycle -1 ;;
+grow) call grow "$(lua_string "$(workspace_key)")" 1 ;;
+shrink) call grow "$(lua_string "$(workspace_key)")" -1 ;;
+mirror) call mirror "$(lua_string "$(workspace_key)")" ;;
+main) call move "$(lua_string "$(workspace_key)")" "'main'" ;;
+move)
+  [[ ${2:-} =~ ^([0-9]+|empty|main)$ ]] || usage
+  call move "$(lua_string "$(workspace_key)")" "$(lua_string "$2")"
+  ;;
+target)
+  [[ ${2:-} =~ ^[0-9]+$ ]] || usage
+  # A drop area on another monitor names its workspace; focus it first so
+  # the app opens there.
+  if [[ -n ${3:-} ]]; then
+    QUILT_WORKSPACE=$3
+    hyprctl dispatch "hl.dsp.focus({ workspace = $(lua_string "$3") })" >/dev/null
+  fi
+  call target "$(lua_string "$(workspace_key)")" "$2" && omarchy-menu summon apps
+  ;;
+status)
+  ensure_loaded
+  lua "return quilt.status($(lua_string "$(workspace_key)"))"
+  ;;
+*) usage ;;
+esac

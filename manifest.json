@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "ugurcanbulut.quilt",
+  "name": "Quilt",
+  "version": "0.1.0",
+  "author": "Ugurcan Bulut",
+  "description": "Tile layout presets on a 10- or 12-column grid, with drop areas for empty tiles",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Quilt",
+    "description": "Tile layout presets on a 10- or 12-column grid, with drop areas for empty tiles",
+    "category": "Tools",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "builtInPresets": true
+    },
+    "schema": [
+      {
+        "key": "builtInPresets",
+        "type": "boolean",
+        "label": "Show built-in presets",
+        "description": "Turn off to show only your own presets (from this widget's presets list in shell.json) and the adaptive ones.",
+        "defaultValue": true
+      }
+    ]
+  }
+}
