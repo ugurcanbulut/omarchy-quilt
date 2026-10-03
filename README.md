@@ -42,6 +42,7 @@ The popup has two tabs of layouts, and a gear tab for settings. **Built-in** hol
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
 - **App homes and one-click launch.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right, and one click opens the apps that aren't there yet. See [App homes](#app-homes).
 - **Monitor defaults.** New workspaces on a monitor can start with a layout of your choice, like Smart on an ultrawide.
+- **Window labels.** Super+Alt+L puts a label of up to 32 characters on the focused window, in the corner or edge you choose in the settings. It takes the window's border colour, and the active border colour while the window has focus. Labels work on any workspace and layout and last as long as the window; an empty label takes it off.
 - **Swap with the keyboard or mouse.** Omarchy's Super+Shift+arrows swaps the focused window with the one in the next tile, or moves it there if that tile is empty, and Super+drag drops a window onto another tile, trading places with the window there (or moving into an empty tile).
 - **Smart layout.** Picks the layout from the number of windows and the monitor's shape:
 
@@ -126,6 +127,7 @@ The gear tab in the popup holds Quilt's settings:
 
 - **Show built-in layouts**, **Drop areas on empty tiles**, **Arrow keys reach empty tiles** and **Scroll on the bar icon to resize**, each on or off.
 - **Extra windows**: as tabs in the last tile, or stacked there.
+- **Window labels**: where a label sits on its window: a top or bottom corner, or the middle of either edge.
 - **New workspaces start with**: a default layout for each connected monitor (see [monitor defaults](#your-own-smart-and-monitor-defaults)).
 - **Smart on … monitors**: the layout Smart uses for 1 to 6 windows on monitors shaped like the one you're on.
 
@@ -157,7 +159,7 @@ In the popup, the arrow keys and Enter pick a layout, and these act right away:
 | `s` | Focused window to the main tile |
 | `x` | Off |
 
-On a grid layout, Super+arrows move between tiles and Super+Shift+arrows move windows between them, empty tiles included (see [Features](#features)). Quilt takes each set over only while it is Omarchy's own and hands it back when you turn the setting off; if you've bound them to something else, Quilt leaves them alone. Otherwise Quilt doesn't add key bindings of its own. To add some, put lines like these in `~/.config/hypr/bindings.lua`:
+Super+Alt+L labels the focused window (Quilt takes it while it's free). On a grid layout, Super+arrows move between tiles and Super+Shift+arrows move windows between them, empty tiles included (see [Features](#features)). Quilt takes each set over only while it is Omarchy's own and hands it back when you turn the setting off; if you've bound them to something else, Quilt leaves them alone. Otherwise Quilt doesn't add key bindings of its own. To add some, put lines like these in `~/.config/hypr/bindings.lua`:
 
 ```lua
 local quilt = os.getenv("HOME") .. "/.config/omarchy/plugins/ugurcanbulut.quilt/quilt"
@@ -186,6 +188,7 @@ quilt move <n|empty>    # move the focused window to tile n, or the first empty 
 quilt swap <a> <b>      # swap the windows in tiles a and b
 quilt target <n>        # open the app launcher; the new app goes to tile n
 quilt deselect          # drop the empty tile picked with Super+arrows
+quilt label [text]      # label the focused window; no text takes the label off
 quilt launch [n]        # open the home apps missing from the workspace, or tile n's app
 quilt home [n] [app]    # make tile n home to an app (default: the focused window's); "none" clears it
 quilt homes [json]      # print or replace the workspace's app homes, like {"2":"chromium"}

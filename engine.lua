@@ -135,6 +135,7 @@ local function load_state()
       s.assign, s.order, s.tabbed, s.made_group, s.refused = {}, {}, nil, nil, nil
       s.pending, s.pending_at, s.pending_nav, s.nav_grab = nil, nil, nil, nil
     end
+    Q.state.labels = nil
     Q.state.session = session
   end
 end
@@ -1460,6 +1461,72 @@ function Q.area(key)
   return area and json(area) or "{}"
 end
 
+----------------------------------------------------------------------- labels
+
+-- Labels you give windows (Super+Alt+L): a few words each, which the bar
+-- widget draws on the window. A label lasts as long as its window.
+local LABEL_CHARS = 32
+local LABEL_KEY, LABEL_DESCRIPTION = "SUPER + ALT + L", "Label window"
+
+local function labels_file() return Q.runtime_dir .. "/labels.json" end
+
+-- { [address] = text } for the bar widget, dropping labels of windows that
+-- are gone.
+local function write_labels()
+  Q.state.labels = Q.state.labels or {}
+  local ok, windows = pcall(hl.get_windows)
+  if not ok or not windows then return end
+  local live, out = {}, {}
+  for _, w in ipairs(windows) do
+    local id = tostring(w.stable_id)
+    live[id] = true
+    if Q.state.labels[id] then out[w.address] = Q.state.labels[id] end
+  end
+  for id in pairs(Q.state.labels) do
+    if not live[id] then Q.state.labels[id] = nil end
+  end
+  write_file(labels_file(), json(out) .. "\n")
+end
+
+-- Label a window, by address or else the focused one: one line, up to 32
+-- characters. Empty text takes the label off.
+function Q.label(address, text)
+  local w
+  if address and address ~= "" then
+    local ok, windows = pcall(hl.get_windows)
+    for _, c in ipairs(ok and windows or {}) do
+      if c.address == address then w = c end
+    end
+  else
+    w = hl.get_active_window()
+  end
+  if not w then return "No window to label" end
+  text = (tostring(text or ""):gsub("%c", " "))
+  text = (text:gsub("^%s+", ""):gsub("%s+$", ""))
+  local length = utf8.len(text)
+  if not length then
+    text = text:sub(1, LABEL_CHARS)
+  elseif length > LABEL_CHARS then
+    text = text:sub(1, utf8.offset(text, LABEL_CHARS + 1) - 1)
+  end
+  Q.state.labels = Q.state.labels or {}
+  Q.state.labels[tostring(w.stable_id)] = text ~= "" and text or nil
+  Q.save()
+  write_labels()
+  return "ok"
+end
+
+-- Super+Alt+L opens the label box on the bar widget, while that key is
+-- free (the script checks).
+local function set_label_key(on)
+  if on == (Q.label_key == true) then return end
+  pcall(hl.unbind, LABEL_KEY)
+  if on then
+    hl.bind(LABEL_KEY, hl.dsp.exec_cmd("omarchy-shell ugurcanbulut.quilt label"), { description = LABEL_DESCRIPTION })
+  end
+  Q.label_key = on
+end
+
 ------------------------------------------------------------------- navigation
 
 -- Hyprland's focus reason for a click (eFocusReason in FocusState.hpp).
@@ -1713,6 +1780,7 @@ function Q.configure(config)
   Q.config = { smart = smart, monitors = monitors, overflow = config.overflow == "stack" and "stack" or "tabs" }
   set_keys("focus", config.navigation == true)
   set_keys("swap", config.swapping == true)
+  set_label_key(config.label_key == true)
   local ok, list = pcall(hl.get_workspaces)
   for _, ws in ipairs(ok and list or {}) do follow_default(ws_key(ws), ws) end
   -- Smart workspaces pick up your layouts.
@@ -1748,6 +1816,11 @@ function Q.load()
     hl.on("window.close", function(w)
       if not w then return end
       local id = tostring(w.stable_id)
+      if Q.state.labels and Q.state.labels[id] then
+        Q.state.labels[id] = nil
+        Q.dirty = true
+        pcall(write_labels)
+      end
       for key, s in pairs(Q.state.workspaces) do
         if forget(s, id) then settle(key, id) end
       end
@@ -1821,6 +1894,7 @@ function Q.load()
   Q.save()
   away_rule()
   schedule_away()
+  write_labels()
   -- Workspaces that don't exist yet get their tiles when they're created,
   -- on whichever monitor that is.
   for key in pairs(Q.state.workspaces) do

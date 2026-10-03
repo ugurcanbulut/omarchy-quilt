@@ -22,7 +22,8 @@
       "dropAreas": true,
       "navigation": true,
       "scrollResize": true,
-      "overflow": "tabs"
+      "overflow": "tabs",
+      "labelPosition": "top-right"
     },
     "schema": [
       {
@@ -63,6 +64,21 @@
         ],
         "description": "With more windows than tiles: tabs puts the extras in the last tile as tabs, stack squeezes them in beside its window.",
         "defaultValue": "tabs"
+      },
+      {
+        "key": "labelPosition",
+        "type": "enum",
+        "label": "Window labels",
+        "options": [
+          "top-left",
+          "top-center",
+          "top-right",
+          "bottom-left",
+          "bottom-center",
+          "bottom-right"
+        ],
+        "description": "Where a window's label sits on it. Super+Alt+L labels the focused window.",
+        "defaultValue": "top-right"
       }
     ]
   }

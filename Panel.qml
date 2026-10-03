@@ -58,6 +58,7 @@ Panel {
   readonly property int scrollIndex: -12
   readonly property int overflowIndex: -13
   readonly property int navigationIndex: -14
+  readonly property int labelPositionIndex: -15
   function monitorIndex(i) { return -20 - i }
   function smartIndex(count) { return -30 - count }
 
@@ -118,6 +119,15 @@ Panel {
   readonly property bool scrollOn: option("scrollResize", true) !== false
   readonly property bool navigationOn: option("navigation", true) !== false
   readonly property string overflowMode: option("overflow", "tabs") === "stack" ? "stack" : "tabs"
+  readonly property var labelPositions: [
+    { value: "top-left", label: "↖", tooltip: "Top left" }, { value: "top-center", label: "↑", tooltip: "Top center" },
+    { value: "top-right", label: "↗", tooltip: "Top right" }, { value: "bottom-left", label: "↙", tooltip: "Bottom left" },
+    { value: "bottom-center", label: "↓", tooltip: "Bottom center" }, { value: "bottom-right", label: "↘", tooltip: "Bottom right" }
+  ]
+  readonly property string labelPosition: {
+    var value = option("labelPosition", "top-right")
+    return labelPositions.some(function(p) { return p.value === value }) ? value : "top-right"
+  }
 
   // Connected monitors, for their default layouts.
   readonly property var monitors: Hyprland.monitors.values.map(function(m) {
@@ -201,7 +211,7 @@ Panel {
   readonly property var navRows: {
     var rows = [{ items: [builtInTabIndex, yoursTabIndex, settingsTabIndex], columns: 3 }], start = 0
     if (tab === "settings" && !picking) {
-      [builtInSettingIndex, dropAreasIndex, navigationIndex, scrollIndex, overflowIndex].forEach(function(i) { rows.push({ items: [i], columns: 1 }) })
+      [builtInSettingIndex, dropAreasIndex, navigationIndex, scrollIndex, overflowIndex, labelPositionIndex].forEach(function(i) { rows.push({ items: [i], columns: 1 }) })
       monitors.forEach(function(m, i) { rows.push({ items: [monitorIndex(i)], columns: 1 }) })
       for (var n = 1; n <= 6; n++) rows.push({ items: [smartIndex(n)], columns: 1 })
     }
@@ -234,6 +244,7 @@ Panel {
     if (i === dropAreasIndex) return "Outline empty tiles with a + you can click to open an app there."
     if (i === navigationIndex) return "Super+arrows stop on empty tiles too, and Super+Shift+arrows move a window into them. Needs Omarchy's own arrow keys."
     if (i === scrollIndex) return "Scroll on the bar icon to widen or narrow the focused window's column."
+    if (i === labelPositionIndex) return "Where a window's label sits on it. Super+Alt+L labels the focused window."
     if (i === overflowIndex) return "More windows than tiles: Tabs puts the extras in the last tile as tabs, Stack squeezes them in beside its window."
     if (i === backIndex) return "Back to the settings without changing anything."
     for (var m = 0; m < monitors.length; m++)
@@ -527,6 +538,10 @@ Panel {
     else if (index === navigationIndex) saveSetting("navigation", !navigationOn, true)
     else if (index === scrollIndex) saveSetting("scrollResize", !scrollOn, true)
     else if (index === overflowIndex) saveSetting("overflow", overflowMode === "tabs" ? "stack" : "tabs", "tabs")
+    else if (index === labelPositionIndex) {
+      var at = labelPositions.map(function(p) { return p.value }).indexOf(labelPosition)
+      saveSetting("labelPosition", labelPositions[(at + 1) % labelPositions.length].value, "top-right")
+    }
     else if (index <= monitorIndex(0) && index > monitorIndex(monitors.length)) openPicker({ kind: "monitor", name: monitors[monitorIndex(0) - index].name })
     else if (index <= smartIndex(1) && index >= smartIndex(6)) openPicker({ kind: "smart", shape: currentShape, count: smartIndex(0) - index })
     else if (picking && index >= 0 && index < flatPresets.length) choose(flatPresets[index])
@@ -606,7 +621,10 @@ Panel {
     if (!p || p.customIndex !== pendingDelete) pendingDelete = -1
   }
 
-  Component.onCompleted: load()
+  Component.onCompleted: {
+    load()
+    bordersProc.running = true
+  }
 
   IpcHandler {
     target: root.ipcTarget
@@ -618,6 +636,7 @@ Panel {
     function toggle(): void { root.toggle() }
     function edit(): void { root.fromFocusedBar("startEdit") }
     function create(): void { root.fromFocusedBar("startNew") }
+    function label(): void { root.fromFocusedBar("startLabel") }
   }
 
   Editor {
@@ -632,7 +651,11 @@ Panel {
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.name === "configreloaded") root.load()
+      if (event.name === "configreloaded") {
+        root.load()
+        bordersProc.running = true
+      }
+      if (root.labelEvents.indexOf(event.name) >= 0) labelRefresh.restart()
     }
   }
 
@@ -1192,6 +1215,41 @@ Panel {
                   }
                 }
 
+                // Window labels: where they sit.
+                Item {
+                  id: labelRow
+                  width: parent.width
+                  height: Math.max(labelRowText.implicitHeight, labelChoice.implicitHeight)
+                  readonly property bool hasCursor: root.cursorIndex === root.labelPositionIndex
+                  onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+
+                  Text {
+                    id: labelRowText
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: "Window labels"
+                    color: root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+
+                  ButtonGroup {
+                    id: labelChoice
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    focusable: false
+                    options: root.labelPositions
+                    value: root.labelPosition
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    cursorIndex: labelRow.hasCursor ? root.labelPositions.map(function(p) { return p.value }).indexOf(root.labelPosition) : -1
+                    onChanged: function(value) { root.saveSetting("labelPosition", value, "top-right") }
+                    onHovered: function(index, h) { if (h) root.cursorIndex = root.labelPositionIndex }
+                  }
+                }
+
                 PanelSectionHeader {
                   text: "NEW WORKSPACES START WITH"
                   foreground: root.bar.foreground
@@ -1618,6 +1676,286 @@ Panel {
         if (!tileFocus.tile) return
         var home = tileFocus.tile.home && mouse.button === Qt.LeftButton
         root.run([home ? "launch" : "target", String(tileFocus.tile.index), dropLayer.key])
+      }
+    }
+  }
+
+  // ------------------------------------------------------------- window labels
+
+  // Labels by window address (without "0x"), from the engine.
+  property var windowLabels: ({})
+  readonly property bool anyLabels: Object.keys(windowLabels).length > 0
+  function addressKey(address) { return String(address || "").toLowerCase().replace(/^0x/, "") }
+
+  FileView {
+    path: root.stateDir + "/labels.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var labels = {}
+      try {
+        var all = JSON.parse(text())
+        Object.keys(all || {}).forEach(function(a) { if (typeof all[a] === "string" && all[a]) labels[root.addressKey(a)] = all[a] })
+      } catch (e) {}
+      root.windowLabels = labels
+      Hyprland.refreshToplevels()
+    }
+    onLoadFailed: root.windowLabels = {}
+  }
+
+  // Hyprland's border colours (a gradient is a list) and width: a label
+  // takes its window's border colour.
+  property var activeBorder: ["#ffcacccc"]
+  property var inactiveBorder: ["#ff595959"]
+  property int borderSize: 2
+  function borderColors(gradient) {
+    return String(gradient || "").split(/\s+/).filter(function(t) { return /^[0-9a-fA-F]{8}$/.test(t) })
+      .map(function(t) { return "#ff" + t.slice(2) })
+  }
+
+  Process {
+    id: bordersProc
+    command: ["sh", "-c", "for o in general:col.active_border general:col.inactive_border general:border_size; do hyprctl getoption $o -j; echo; done"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        text.split("\n").forEach(function(line) {
+          var o
+          try { o = JSON.parse(line) } catch (e) { return }
+          if (o.option === "general:col.active_border" && root.borderColors(o.gradient).length) root.activeBorder = root.borderColors(o.gradient)
+          if (o.option === "general:col.inactive_border" && root.borderColors(o.gradient).length) root.inactiveBorder = root.borderColors(o.gradient)
+          if (o.option === "general:border_size" && typeof o.int === "number") root.borderSize = o.int
+        })
+      }
+    }
+  }
+
+  // Window positions only reach the shell when asked for: after events that
+  // move windows (Quilt's own layout passes too), and every half second
+  // while there are labels, for resizes no event reports.
+  readonly property var labelEvents: ["openwindow", "closewindow", "movewindowv2", "changefloatingmode", "fullscreen",
+    "activewindowv2", "workspacev2", "focusedmon", "activespecial", "togglegroup", "moveintogroup", "moveoutofgroup", "custom"]
+
+  Timer {
+    id: labelRefresh
+    interval: 40
+    onTriggered: {
+      Hyprland.refreshToplevels()
+      Hyprland.refreshMonitors()
+    }
+  }
+
+  Timer {
+    interval: 500
+    repeat: true
+    running: root.anyLabels && labelLayer.monitor !== null
+    onTriggered: Hyprland.refreshToplevels()
+  }
+
+  function readableOn(color) {
+    var c = Qt.color(color)
+    return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b > 0.55 ? "#1a1a1a" : "#ffffff"
+  }
+
+  // Labels drawn on the windows shown on this bar's monitor, above them and
+  // out of the way of clicks. A tiled window's label hides under a floating
+  // window over it.
+  PanelWindow {
+    id: labelLayer
+    readonly property var monitor: dropLayer.monitor
+    readonly property var windows: {
+      var labels = root.windowLabels
+      if (!monitor || !root.anyLabels) return []
+      var info = monitor.lastIpcObject || {}
+      var special = info.specialWorkspace && info.specialWorkspace.name ? info.specialWorkspace.name : ""
+      var shown = monitor.activeWorkspace ? monitor.activeWorkspace.id : null
+      var out = []
+      Hyprland.toplevels.values.forEach(function(t) {
+        var o = t.lastIpcObject
+        if (!o || !o.workspace || !o.at || !o.size || o.mapped === false || o.hidden) return
+        if (special ? o.workspace.name !== special : o.workspace.id !== shown) return
+        var tags = (o.tags || []).map(function(tag) { return String(tag).replace(/\*$/, "") })
+        out.push({
+          text: labels[root.addressKey(t.address)] || "",
+          x: o.at[0] - monitor.x, y: o.at[1] - monitor.y, w: o.size[0], h: o.size[1],
+          floating: !!o.floating,
+          // The window left for a picked tile looks inactive, so its label does.
+          active: t.activated && tags.indexOf("quilt-away") < 0
+        })
+      })
+      return out
+    }
+    readonly property var labelled: windows.filter(function(w) { return w.text !== "" })
+    readonly property var floats: windows.filter(function(w) { return w.floating })
+
+    screen: dropLayer.screen
+    visible: labelled.length > 0 && editor.mode === "" && !labelRemap.remapping
+    color: "transparent"
+    anchors { top: true; bottom: true; left: true; right: true }
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.namespace: "quilt-labels"
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    // Clicks go through to the windows.
+    mask: Region {}
+
+    ScreenMoveRemap {
+      id: labelRemap
+      window: labelLayer
+    }
+
+    Repeater {
+      model: labelLayer.labelled
+
+      Item {
+        id: labelSlot
+        required property var modelData
+        x: modelData.x
+        y: modelData.y
+        width: modelData.w
+        height: modelData.h
+
+        readonly property var colors: modelData.active ? root.activeBorder : root.inactiveBorder
+        readonly property real inset: root.borderSize + Style.space(6)
+        readonly property string place: root.labelPosition
+
+        Rectangle {
+          id: pill
+          height: Style.space(22)
+          width: Math.min(labelText.implicitWidth + Style.space(16), labelSlot.width - 2 * labelSlot.inset)
+          radius: height / 2
+          x: labelSlot.place.indexOf("left") > 0 ? labelSlot.inset
+            : labelSlot.place.indexOf("right") > 0 ? labelSlot.width - width - labelSlot.inset
+            : (labelSlot.width - width) / 2
+          y: labelSlot.place.indexOf("top") === 0 ? labelSlot.inset : labelSlot.height - height - labelSlot.inset
+          color: labelSlot.colors[0]
+          gradient: labelSlot.colors.length > 1 ? pillGradient : null
+          visible: !covered && labelSlot.width > 2 * labelSlot.inset + Style.space(24)
+
+          // Under a floating window: hidden.
+          readonly property bool covered: !labelSlot.modelData.floating && labelLayer.floats.some(function(f) {
+            var left = labelSlot.x + x, top = labelSlot.y + y
+            return left < f.x + f.w && left + width > f.x && top < f.y + f.h && top + height > f.y
+          })
+
+          Gradient {
+            id: pillGradient
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: labelSlot.colors[0] }
+            GradientStop { position: 1; color: labelSlot.colors[labelSlot.colors.length - 1] }
+          }
+
+          Text {
+            id: labelText
+            anchors.centerIn: parent
+            width: Math.min(implicitWidth, pill.width - Style.space(16))
+            elide: Text.ElideRight
+            textFormat: Text.PlainText
+            text: labelSlot.modelData.text
+            color: root.readableOn(labelSlot.colors[0])
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+            font.weight: Font.DemiBold
+          }
+        }
+      }
+    }
+  }
+
+  // The label box: Super+Alt+L over the focused window. Enter keeps the
+  // text (none takes the label off), Escape or a click elsewhere leaves it.
+  property var labelTarget: null
+
+  function startLabel() {
+    var t = Hyprland.activeToplevel
+    var o = t ? t.lastIpcObject : null
+    var monitor = dropLayer.monitor
+    if (!t || !monitor) return
+    var box = o && o.at && o.size ? { x: o.at[0] - monitor.x, y: o.at[1] - monitor.y, w: o.size[0], h: o.size[1] } : null
+    labelTarget = { address: "0x" + addressKey(t.address), text: windowLabels[addressKey(t.address)] || "", app: o && o.class ? o.class : "", box: box }
+  }
+
+  function finishLabel(save) {
+    if (save && labelTarget) run(["label", "--window", labelTarget.address, labelField.text.trim()])
+    labelTarget = null
+  }
+
+  PanelWindow {
+    id: labelPrompt
+    screen: dropLayer.screen
+    visible: root.labelTarget !== null
+    color: "transparent"
+    anchors { top: true; bottom: true; left: true; right: true }
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.namespace: "quilt-label-box"
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+
+    onVisibleChanged: if (visible) Qt.callLater(function() {
+      labelField.text = root.labelTarget ? root.labelTarget.text : ""
+      labelField.forceActiveFocus()
+      labelField.selectAll()
+    })
+
+    MouseArea {
+      anchors.fill: parent
+      onClicked: root.finishLabel(false)
+    }
+
+    Rectangle {
+      id: labelCard
+      readonly property var box: root.labelTarget && root.labelTarget.box
+      width: Style.space(320)
+      height: labelColumn.implicitHeight + Style.space(24)
+      x: box ? Math.max(Style.space(8), Math.min(labelPrompt.width - width - Style.space(8), box.x + (box.w - width) / 2)) : (labelPrompt.width - width) / 2
+      y: box ? Math.max(Style.space(8), Math.min(labelPrompt.height - height - Style.space(8), box.y + (box.h - height) / 2)) : (labelPrompt.height - height) / 2
+      radius: Style.cornerRadius
+      color: Color.popups.background
+      border.color: Color.popups.border
+      border.width: 1
+
+      // Clicks on the card stay on it.
+      MouseArea { anchors.fill: parent }
+
+      Column {
+        id: labelColumn
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: Style.space(12)
+        spacing: Style.space(8)
+
+        Text {
+          textFormat: Text.PlainText
+          text: root.labelTarget && root.labelTarget.app ? "Label for " + root.labelTarget.app : "Label for this window"
+          color: Color.popups.text
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+          font.weight: Font.DemiBold
+        }
+
+        TextField {
+          id: labelField
+          width: parent.width
+          height: Style.space(32)
+          verticalAlignment: TextInput.AlignVCenter
+          maximumLength: 32
+          placeholderText: "Up to 32 characters"
+          foreground: Color.popups.text
+          onAccepted: root.finishLabel(true)
+          Keys.onEscapePressed: root.finishLabel(false)
+        }
+
+        Text {
+          width: parent.width
+          wrapMode: Text.WordWrap
+          textFormat: Text.PlainText
+          text: "Enter to keep it · empty takes the label off · Esc to leave it"
+          color: Color.popups.text
+          opacity: 0.6
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
       }
     }
   }

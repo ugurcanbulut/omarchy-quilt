@@ -18,6 +18,9 @@
 #                            app whose home is tile n
 #   quilt home [n] [app]     make tile n home to an app (default: the focused
 #                            window's app and tile); "none" clears it
+#   quilt label [text]       label the focused window (32 characters at
+#                            most); no text takes the label off.
+#                            --window <address> labels another window
 #   quilt homes [json]       print or replace the workspace's app homes;
 #                            "remember" makes each tile's app its home
 #   quilt edit               edit the active workspace's layout on screen
@@ -111,15 +114,22 @@ omarchy_arrows() {
     | ($b | length) == 4 and all($b[]; (.description // "") | test($desc))' >/dev/null
 }
 
+# Whether Super+Alt+L is free for labelling windows: unbound, or Quilt's own.
+label_key_free() {
+  hyprctl binds -j 2>/dev/null | jq -e '[.[] | select(.modmask == 72 and (.key | ascii_upcase) == "L")]
+    | all(.description == "Label window")' >/dev/null
+}
+
 # Your Smart layouts and monitor defaults from the widget's settings, as a Lua
 # table for the engine. A monitor default can be a spec or one of your
 # presets by label, with its gaps and apps. The arrow keys work tile by tile
 # unless you turned that off, each set only while it is Omarchy's own.
 config_lua() {
-  local focus=false swap=false
+  local focus=false swap=false label=false
   omarchy_arrows 64 '^Focus on (left|right|above|below) window$' && focus=true
   omarchy_arrows 65 '^Swap window (to the left|to the right|up|down)$' && swap=true
-  jq -r --argjson focus "$focus" --argjson swap "$swap" '
+  label_key_free && label=true
+  jq -r --argjson focus "$focus" --argjson swap "$swap" --argjson label "$label" '
     def lua:
       if type == "object" then "{" + ([to_entries[] | "[\(.key | if test("^[0-9]+$") then . else @json end)]=\(.value | lua)"] | join(",")) + "}"
       elif type == "array" then "{" + ([to_entries[] | "[\(.key + 1)]=\(.value | lua)"] | join(",")) + "}"
@@ -131,6 +141,7 @@ config_lua() {
     { overflow: (if .overflow == "stack" then "stack" else "tabs" end),
       navigation: ((.navigation != false) and $focus),
       swapping: ((.navigation != false) and $swap),
+      label_key: $label,
       smart: (.smart // {} | if type == "object" then . else {} end),
       monitors: (.monitors // {} | if type == "object" then . else {} end | with_entries(.value |= (
         (if type == "string" then preset(.) elif type == "object" then . else {} end)
@@ -380,6 +391,16 @@ target)
   # the app opens there.
   [[ -n ${3:-} ]] && focus_workspace "$3"
   call target "$(lua_string "$(workspace_key)")" "$2" && omarchy-menu summon apps
+  ;;
+label)
+  shift
+  window=""
+  if [[ ${1:-} == --window ]]; then
+    window=${2:-}
+    shift 2 || usage
+    [[ $window =~ ^0x[0-9a-fA-F]+$ ]] || usage
+  fi
+  call label "$(lua_string "$window")" "$(lua_string "$*")"
   ;;
 deselect)
   call deselect "$(lua_string "${2:-$(workspace_key)}")"
