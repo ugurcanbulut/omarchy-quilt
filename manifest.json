@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ugurcanbulut.quilt",
   "name": "Quilt",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "author": "Ugurcan Bulut",
   "description": "Tile layout presets on a 10- or 12-column grid, with drop areas for empty tiles",
   "kinds": [
