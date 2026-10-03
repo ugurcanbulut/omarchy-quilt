@@ -785,8 +785,11 @@ Panel {
     property int windows: -1
     property color color: Color.foreground
     property real gap: 1.5
+    // Whole pixels and whole-pixel gaps, symmetric layouts kept symmetric:
+    // for tiny sizes like the bar icon, where half pixels blur.
+    property bool crisp: false
 
-    readonly property var tiles: Layout.tilesFor(spec)
+    readonly property var tiles: crisp ? Layout.pixelTiles(spec, Math.round(width), Math.round(height), Math.round(gap)) : Layout.tilesFor(spec)
 
     Repeater {
       model: thumb.tiles
@@ -795,11 +798,11 @@ Panel {
         required property var modelData
         readonly property bool filled: thumb.windows < 0 || modelData.rank < thumb.windows
 
-        x: modelData.x * thumb.width + thumb.gap / 2
-        y: modelData.y * thumb.height + thumb.gap / 2
-        width: modelData.w * thumb.width - thumb.gap
-        height: modelData.h * thumb.height - thumb.gap
-        radius: Math.min(2, width / 4)
+        x: thumb.crisp ? modelData.x : modelData.x * thumb.width + thumb.gap / 2
+        y: thumb.crisp ? modelData.y : modelData.y * thumb.height + thumb.gap / 2
+        width: thumb.crisp ? modelData.w : modelData.w * thumb.width - thumb.gap
+        height: thumb.crisp ? modelData.h : modelData.h * thumb.height - thumb.gap
+        radius: thumb.crisp ? 0 : Math.min(2, width / 4)
         color: filled ? thumb.color : "transparent"
         opacity: filled ? 0.9 : 0.6
         border.color: thumb.color
@@ -814,7 +817,8 @@ Panel {
     bar: root.bar
     readonly property bool grid: Layout.parse(root.shownSpec) !== null
 
-    text: grid ? "" : root.glyph(root.builtInLayouts[root.activeSpec] || 0xF0574)
+    // md-collage: tiles of different sizes, as big as the icons beside it.
+    text: grid ? "" : root.glyph(root.builtInLayouts[root.activeSpec] || 0xF0640)
     iconComponent: grid ? miniQuilt : null
     tooltipText: "Quilt · " + (root.activeSpec || "Omarchy default") + (root.activeSpec === "smart" && root.activeTiles ? " (" + root.activeTiles.spec + ")" : "")
       + (root.resizable && root.scrollOn ? "\nScroll to resize · right-click for the next preset" : "\nRight-click for the next preset")
@@ -833,11 +837,22 @@ Panel {
 
   Component {
     id: miniQuilt
-    Thumb {
-      spec: root.shownSpec
-      windows: root.activeTiles && root.activeTiles.workspace === root.activeKey && !root.activeTiles.smart ? root.activeTiles.windows : -1
-      color: root.bar ? root.bar.foreground : Color.foreground
-      gap: 2
+    // The live layout, drawn about as big as the bar's other icons rather
+    // than filling the whole icon slot.
+    Item {
+      Thumb {
+        // 13 x 11, like the icons beside it; an odd width lets one-pixel
+        // gaps split symmetric layouts evenly.
+        x: Math.floor((parent.width - width) / 2)
+        y: Math.floor((parent.height - height) / 2)
+        width: Style.space(13)
+        height: Style.space(11)
+        spec: root.shownSpec
+        windows: root.activeTiles && root.activeTiles.workspace === root.activeKey && !root.activeTiles.smart ? root.activeTiles.windows : -1
+        color: root.bar ? root.bar.foreground : Color.foreground
+        gap: 1
+        crisp: true
+      }
     }
   }
 

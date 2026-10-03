@@ -205,6 +205,61 @@ function tilesFor(spec) {
   })
 }
 
+// Pixel edges along one axis: the distinct tile edges (fractions 0..1), with
+// `gap` pixels between neighbouring segments and the rest shared out by size.
+// Leftover pixels go to the largest remainders, outer segments first on a
+// tie, so a symmetric layout stays symmetric.
+function pixelAxis(edges, size, gap) {
+  edges = edges.slice().sort(function(a, b) { return a - b })
+  var n = edges.length - 1
+  if (size - gap * (n - 1) < n) gap = 0
+  var room = size - gap * (n - 1)
+  var exact = [], px = [], used = 0, k
+  for (k = 0; k < n; k++) {
+    exact.push((edges[k + 1] - edges[k]) * room)
+    px.push(Math.floor(exact[k] + EPS))
+    used += px[k]
+  }
+  var order = px.map(function(_, k) { return k })
+  order.sort(function(a, b) {
+    var ra = exact[a] - px[a], rb = exact[b] - px[b]
+    if (Math.abs(ra - rb) > 1e-6) return rb - ra
+    var da = Math.abs(a - (n - 1) / 2), db = Math.abs(b - (n - 1) / 2)
+    return Math.abs(da - db) > 1e-6 ? db - da : a - b
+  })
+  for (k = 0; k < room - used; k++) px[order[k % n]]++
+  var starts = [], at = 0
+  for (k = 0; k < n; k++) { starts.push(at); at += px[k] + gap }
+  var index = function(e) {
+    for (var i = 0; i < edges.length; i++) if (near(edges[i], e)) return i
+    return 0
+  }
+  return {
+    start: function(e) { var i = index(e); return i < n ? starts[i] : size },
+    end: function(e) { var i = index(e); return i > 0 ? starts[i - 1] + px[i - 1] : 0 }
+  }
+}
+
+// Tiles of a spec in whole pixels for a size x height picture, `gap` pixels
+// apart, with their fill rank: crisp at the size of a bar icon.
+function pixelTiles(spec, size, height, gap) {
+  var layout = parse(spec)
+  if (!layout) return []
+  var xs = [0, 1], ys = [0, 1]
+  var add = function(list, v) { if (!list.some(function(e) { return near(e, v) })) list.push(v) }
+  layout.rects.forEach(function(r) {
+    add(xs, r.x / layout.gw); add(xs, (r.x + r.w) / layout.gw)
+    add(ys, r.y / layout.gh); add(ys, (r.y + r.h) / layout.gh)
+  })
+  var ax = pixelAxis(xs, size, gap), ay = pixelAxis(ys, height, gap)
+  var ranks = fillRanks(layout.rects)
+  return layout.rects.map(function(r, i) {
+    var x0 = ax.start(r.x / layout.gw), x1 = ax.end((r.x + r.w) / layout.gw)
+    var y0 = ay.start(r.y / layout.gh), y1 = ay.end((r.y + r.h) / layout.gh)
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, rank: ranks[i] }
+  })
+}
+
 function overlaps(a, b) {
   return Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > EPS
     && Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > EPS
