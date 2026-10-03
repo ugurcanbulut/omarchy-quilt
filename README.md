@@ -80,7 +80,7 @@ A new window goes to its app's home if it's free. If something else sits there, 
 
 ### Launching
 
-- In the popup, presets with app homes have a rocket in the corner. Click it (or press `L` on the preset) to use the preset and open each of its apps that isn't on the workspace yet, straight into its tile.
+- In the popup, presets with app homes have a rocket in the corner. Click it (or press `O` on the preset) to use the preset and open each of its apps that isn't on the workspace yet, straight into its tile.
 - An empty home tile's drop area opens its own app when clicked. Right-click it to pick another app from the launcher.
 - `quilt launch` does the same for the current workspace, and `quilt launch 3` opens tile 3's app.
 
@@ -138,7 +138,7 @@ In the popup, the arrow keys and Enter pick a layout, and these act right away:
 | Key | Action |
 |---|---|
 | `e` | Edit the current layout |
-| `l` | Use the preset under the cursor and open its apps |
+| `o` | Use the preset under the cursor and open its apps |
 | `n` | Draw a new layout |
 | `m` | Mirror |
 | `s` | Focused window to the main tile |

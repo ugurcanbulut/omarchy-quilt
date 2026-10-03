@@ -143,7 +143,7 @@ Panel {
     var text = (preset.label && preset.label !== preset.spec ? preset.label + " · " : "") + preset.spec
       + (count ? " · " + count + (count === 1 ? " tile" : " tiles") : "")
     var homes = Object.keys(preset.apps || {}).sort(function(a, b) { return a - b }).map(function(tile) { return preset.apps[tile] + " in " + tile })
-    if (homes.length) text += " · " + homes.join(", ") + ". The rocket (or L) also opens them"
+    if (homes.length) text += " · " + homes.join(", ") + ". The rocket (or O) also opens them"
     if (preset.custom) text += pendingDelete === preset.customIndex ? ". Right-click again to remove it." : ". Right-click to remove it."
     return text
   }
@@ -463,13 +463,13 @@ Panel {
       onActivateRequested: root.activate(root.cursorIndex)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      // e edits the layout, n draws a new one, l applies the preset under the
+      // e edits the layout, n draws a new one, o applies the preset under the
       // cursor and opens its apps, m mirrors, s swaps the focused window
-      // into the main tile, x turns Quilt off here.
+      // into the main tile, x turns Quilt off here. (h, j, k and l move.)
       onTextKey: function(t) {
         if (t === "e") root.activate(root.editIndex)
         else if (t === "n") root.activate(root.newIndex)
-        else if (t === "l" && root.hasApps(root.flatPresets[root.cursorIndex])) root.launchPreset(root.flatPresets[root.cursorIndex])
+        else if (t === "o" && root.hasApps(root.flatPresets[root.cursorIndex])) root.launchPreset(root.flatPresets[root.cursorIndex])
         else if (t === "m") root.activate(root.mirrorIndex)
         else if (t === "s") root.activate(root.mainIndex)
       }
