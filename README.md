@@ -2,6 +2,8 @@
 
 An [Omarchy](https://omarchy.org) bar widget for tiling layouts. Pick a layout from the popup and the windows on your current workspace arrange into it. They stay tiled, new windows flow into the layout, and empty tiles turn into drop areas you can click to open an app right there. To make your own layouts, draw them on screen.
 
+![Four windows in the 3:2|6|3:2 layout, an empty tile showing its drop area, and the Quilt popup open from the bar](docs/screenshot-v0.1.1.png)
+
 ## Layouts on a grid
 
 Every layout is written as column widths on a **10- or 12-column grid**, separated by `|`. The total tells Quilt which grid you mean:
@@ -58,6 +60,8 @@ The popup has two buttons for making layouts of your own:
 - **New** takes you to an empty workspace (99, or the next free one below it) and shows a blank 12 × 12 grid; switch to 10 × 10 if you like. Drag across the grid to draw tiles of any shape and size, and leave cells empty wherever you want a gap. **Save** adds it to your presets, **Save and use** also puts it on the workspace you came from, and either one takes you back there.
 
 Ctrl+Z undoes the last change. The toolbar can be dragged by its title if it covers a tile.
+
+![The editor over the same workspace: each tile labeled with its number, app and size, and the toolbar at the bottom](docs/editor-v0.1.1.png)
 
 ## Install
 
