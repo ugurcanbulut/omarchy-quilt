@@ -61,12 +61,63 @@ Panel {
   function monitorIndex(i) { return -20 - i }
   function smartIndex(count) { return -30 - count }
 
+  // Settings come from shell.json itself. The bar hands a reloaded widget
+  // (any change under the plugins folder reloads them all) the settings it
+  // started with, and saving on top of those would undo every change since.
+  property var fileSettings: null
+  // A save the file doesn't show yet, so a second save builds on it.
+  property var savedSettings: null
+  readonly property var currentSettings: savedSettings || fileSettings || root.settings || {}
+
+  function entryIn(text) {
+    try {
+      var layout = JSON.parse(text).bar.layout
+      var sections = ["left", "center", "right"]
+      for (var s = 0; s < sections.length; s++) {
+        var list = layout[sections[s]]
+        for (var i = 0; Array.isArray(list) && i < list.length; i++)
+          if (list[i] && typeof list[i] === "object" && list[i].id === root.moduleName) return list[i]
+      }
+    } catch (e) {}
+    return null
+  }
+
+  function sameSettings(a, b) {
+    function plain(o) { var c = Object.assign({}, o); delete c.id; return JSON.stringify(c) }
+    return plain(a) === plain(b)
+  }
+
+  FileView {
+    path: (Quickshell.env("HOME") || "") + "/.config/omarchy/shell.json"
+    watchChanges: true
+    blockLoading: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      var entry = root.entryIn(text())
+      if (!entry) return
+      root.fileSettings = entry
+      if (root.savedSettings && root.sameSettings(root.savedSettings, entry)) root.savedSettings = null
+    }
+  }
+
+  Timer {
+    id: savedTimer
+    interval: 2000
+    onTriggered: root.savedSettings = null
+  }
+
+  function option(name, fallback) {
+    var value = currentSettings[name]
+    return value === undefined || value === null ? fallback : value
+  }
+
   // Settings, with their defaults.
-  readonly property bool showBuiltIn: setting("builtInPresets", true) !== false
-  readonly property bool dropAreasOn: setting("dropAreas", true) !== false
-  readonly property bool scrollOn: setting("scrollResize", true) !== false
-  readonly property bool navigationOn: setting("navigation", true) !== false
-  readonly property string overflowMode: setting("overflow", "tabs") === "stack" ? "stack" : "tabs"
+  readonly property bool showBuiltIn: option("builtInPresets", true) !== false
+  readonly property bool dropAreasOn: option("dropAreas", true) !== false
+  readonly property bool scrollOn: option("scrollResize", true) !== false
+  readonly property bool navigationOn: option("navigation", true) !== false
+  readonly property string overflowMode: option("overflow", "tabs") === "stack" ? "stack" : "tabs"
 
   // Connected monitors, for their default layouts.
   readonly property var monitors: Hyprland.monitors.values.map(function(m) {
@@ -223,7 +274,7 @@ Panel {
 
   // Your Smart layouts for a monitor shape, by window count.
   function smartList(shape) {
-    var mine = setting("smart", {})
+    var mine = option("smart", {})
     return mine && mine[shape] ? toArray(mine[shape]) : []
   }
 
@@ -236,7 +287,7 @@ Panel {
   function smartSpec(count) { return Layout.smartSpec(monitorShape(), count, smartList(monitorShape())) }
 
   function monitorDefault(name) {
-    var all = setting("monitors", {})
+    var all = option("monitors", {})
     var value = all ? all[name] : ""
     return typeof value === "string" ? value : ""
   }
@@ -256,14 +307,14 @@ Panel {
   }
 
   function setMonitorDefault(name, value) {
-    var all = Object.assign({}, setting("monitors", {}) || {})
+    var all = Object.assign({}, option("monitors", {}) || {})
     if (value) all[name] = value
     else delete all[name]
     saveSettings({ monitors: Object.keys(all).length ? all : undefined })
   }
 
   function setSmart(shape, count, spec) {
-    var stored = setting("smart", {}) || {}
+    var stored = option("smart", {}) || {}
     var all = {}
     Object.keys(stored).forEach(function(key) { all[key] = toArray(stored[key]) })
     var list = (all[shape] || []).slice()
@@ -322,8 +373,12 @@ Panel {
   }
 
   function saveSettings(changes) {
-    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-      root.bar.shell.updateEntryInline(root.moduleName, Object.assign({}, root.settings || {}, changes))
+    if (!(root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")) return
+    var next = Object.assign({}, root.currentSettings, changes)
+    Object.keys(next).forEach(function(k) { if (next[k] === undefined) delete next[k] })
+    root.savedSettings = next
+    savedTimer.restart()
+    root.bar.shell.updateEntryInline(root.moduleName, next)
   }
 
   // Lists in settings can arrive as Qt sequences, which Array.isArray turns
@@ -334,7 +389,7 @@ Panel {
     return Array.prototype.slice.call(value)
   }
 
-  function customPresets() { return toArray(setting("presets", [])) }
+  function customPresets() { return toArray(option("presets", [])) }
 
   // apps: { "2": "chromium", ... } to keep with the preset, or nothing.
   function savePreset(label, spec, apps) {
@@ -478,14 +533,14 @@ Panel {
       if (!p || typeof p.spec !== "string" || !Layout.parse(p.spec.replace(/\s/g, ""))) return null
       return { spec: p.spec.replace(/\s/g, ""), label: p.label || p.spec, gapsIn: p.gapsIn, gapsOut: p.gapsOut, apps: p.apps, custom: true, customIndex: index }
     }).filter(Boolean)
-    var showBuiltIn = setting("builtInPresets", true) !== false
+    var showBuiltIn = option("builtInPresets", true) !== false
     builtInList = (builtIn || []).filter(function(s) { return showBuiltIn || s.title === "ADAPTIVE" })
     yoursList = mine
   }
 
   property var builtInSections: []
   onBuiltInSectionsChanged: buildSections(builtInSections)
-  onSettingsChanged: {
+  onCurrentSettingsChanged: {
     buildSections(builtInSections)
     configureTimer.restart()
   }
