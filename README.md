@@ -120,6 +120,7 @@ They live in a `presets` list on the Quilt entry in your bar layout in `~/.confi
 - Add `"builtInPresets": false` to keep only the adaptive layouts (Smart, Dwindle, Scrolling, Monocle) on the Built-in tab.
 - Add `"overflow": "stack"` to stack extra windows in the last tile instead of making them tabs.
 - Add `"navigation": false` to give Super+arrows and Super+Shift+arrows back to Hyprland's plain focus move and swap.
+- Add `"labelPosition"` with `top-left`, `top-center`, `top-right` (the default), `bottom-left`, `bottom-center` or `bottom-right` to place window labels.
 
 ## Settings
 
@@ -178,7 +179,7 @@ Check `omarchy menu keybindings --print` first for chords you already use.
 ## Command line
 
 ```bash
-quilt set <spec>        # 4|8, 3|6|3:2, 4:8/4|8, @12x12:..., smart, dwindle, scrolling, monocle, off
+quilt set <spec>        # 4|8, 3|6|3:2, 4:8/4|8, @12x12:..., smart, dwindle, scrolling, monocle, master, off
 quilt use <name>        # one of your presets, by label or spec, with its gaps and apps
 quilt next | prev       # cycle through the layouts
 quilt grow | shrink     # widen or narrow the focused window's column
@@ -192,6 +193,7 @@ quilt label [text]      # label the focused window; no text takes the label off
 quilt launch [n]        # open the home apps missing from the workspace, or tile n's app
 quilt home [n] [app]    # make tile n home to an app (default: the focused window's); "none" clears it
 quilt homes [json]      # print or replace the workspace's app homes, like {"2":"chromium"}
+quilt homes remember    # make each tile's app its home
 quilt edit | new        # open the editor
 quilt status            # the active workspace's layout, as JSON
 quilt area              # the area its tiles share, as JSON
