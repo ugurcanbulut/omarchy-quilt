@@ -25,6 +25,19 @@ Panel {
   // Built-in Hyprland layouts Quilt can switch to, and their icons.
   readonly property var builtInLayouts: ({ dwindle: 0xF056E, scrolling: 0xF0728, monocle: 0xF0293, master: 0xF056D })
 
+  // The bar draws every glyph at one font size, but these carry different
+  // padding; at these sizes (measured on the bar, against its 13px icon
+  // font) each comes out 11px tall like the icons beside it.
+  readonly property var glyphFontScale: {
+    var scale = {}
+    scale[0xF0640] = 15 / 13 // md-collage, Quilt's own
+    scale[0xF056E] = 15 / 13 // dwindle
+    scale[0xF0728] = 15 / 13 // scrolling
+    scale[0xF0293] = 18 / 13 // monocle
+    scale[0xF056D] = 21 / 13 // master
+    return scale
+  }
+
   // Specs per workspace, from the engine.
   property var summary: ({})
 
@@ -817,8 +830,10 @@ Panel {
     bar: root.bar
     readonly property bool grid: Layout.parse(root.shownSpec) !== null
 
-    // md-collage: tiles of different sizes, as big as the icons beside it.
-    text: grid ? "" : root.glyph(root.builtInLayouts[root.activeSpec] || 0xF0640)
+    // md-collage (tiles of different sizes) unless a Hyprland layout is in use.
+    readonly property int glyphCode: grid ? 0 : root.builtInLayouts[root.activeSpec] || 0xF0640
+    text: glyphCode ? root.glyph(glyphCode) : ""
+    fontSize: Math.round(Style.bar.iconFont * (root.glyphFontScale[glyphCode] || 1))
     iconComponent: grid ? miniQuilt : null
     tooltipText: "Quilt · " + (root.activeSpec || "Omarchy default") + (root.activeSpec === "smart" && root.activeTiles ? " (" + root.activeTiles.spec + ")" : "")
       + (root.resizable && root.scrollOn ? "\nScroll to resize · right-click for the next preset" : "\nRight-click for the next preset")
