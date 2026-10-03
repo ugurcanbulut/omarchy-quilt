@@ -131,7 +131,10 @@ local function load_state()
   -- from the last one mean nothing.
   local session = os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""
   if Q.state.session ~= session then
-    for _, s in pairs(Q.state.workspaces) do s.assign, s.order, s.pending, s.tabbed, s.made_group = {}, {}, nil, nil, nil end
+    for _, s in pairs(Q.state.workspaces) do
+      s.assign, s.order, s.tabbed, s.made_group, s.refused = {}, {}, nil, nil, nil
+      s.pending, s.pending_at, s.pending_nav, s.nav_grab = nil, nil, nil, nil
+    end
     Q.state.session = session
   end
 end
@@ -632,6 +635,14 @@ local function recalculate(ctx)
   local first = ctx.targets[1] and ctx.targets[1].window
   local key = first and ws_key(first.workspace)
   if not key then return end
+  -- Switching a workspace to Off or one of Hyprland's layouts still hands
+  -- its windows to Quilt while Hyprland changes over: place them plainly,
+  -- and leave its state and tiles file alone.
+  local leaving = Q.state.workspaces[key]
+  if leaving and (leaving.off or LAYOUTS[leaving.spec]) then
+    for i, t in ipairs(ctx.targets) do t:place(ctx:column(i, #ctx.targets)) end
+    return
+  end
   local s = ws_state(key)
   local smart = s.spec == "smart"
   local spec = smart and smart_spec(#ctx.targets, first.monitor) or s.spec
@@ -1160,6 +1171,8 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
   s.gaps_in, s.gaps_out = tonumber(gaps_in), tonumber(gaps_out)
   arrange(key, s)
   apply_rule(key)
+  -- One of Hyprland's layouts has no tiles to show.
+  if LAYOUTS[spec] then os.remove(tiles_file(key)) end
   Q.save()
   Q.refresh(key)
   return "ok"
@@ -1791,6 +1804,10 @@ function Q.load()
       -- Where it was, in case this is a Super+drag that ends in a drop.
       if s and (s.assign[id] or position(s.order, id)) then
         Q.lifted = Q.lifted or {}
+        -- Windows floated for good never come back to claim theirs.
+        for other, lift in pairs(Q.lifted) do
+          if os.time() - lift.at > DROP_SECONDS then Q.lifted[other] = nil end
+        end
         Q.lifted[id] = { key = key, tile = s.assign[id], slot = position(s.order, id), at = os.time() }
       end
       if s and forget(s, id) then

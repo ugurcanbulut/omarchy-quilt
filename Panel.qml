@@ -123,6 +123,13 @@ Panel {
   readonly property var monitors: Hyprland.monitors.values.map(function(m) {
     return { name: m.name, label: m.name + " · " + m.width + "×" + m.height, shape: shapeOf(m) }
   })
+  // A monitor unplugged while its row has the cursor, or its picker is
+  // open: the cursor moves to a row that's still there.
+  onMonitorsChanged: {
+    if (picking && picking.kind === "monitor" && !monitors.some(function(m) { return m.name === picking.name })) closePicker()
+    if (cursorIndex <= monitorIndex(0) && cursorIndex > monitorIndex(10) && monitorIndex(0) - cursorIndex >= monitors.length)
+      cursorIndex = monitors.length ? monitorIndex(monitors.length - 1) : builtInSettingIndex
+  }
 
   // A layout picker over the settings: { kind: "monitor", name } or
   // { kind: "smart", shape, count }.
@@ -286,9 +293,12 @@ Panel {
 
   function smartSpec(count) { return Layout.smartSpec(monitorShape(), count, smartList(monitorShape())) }
 
+  // A monitor default is a string, or (written by hand) an object with a
+  // spec and its own gaps and apps.
   function monitorDefault(name) {
     var all = option("monitors", {})
     var value = all ? all[name] : ""
+    if (value && typeof value === "object" && typeof value.spec === "string") return value.spec.replace(/\s/g, "")
     return typeof value === "string" ? value : ""
   }
 
