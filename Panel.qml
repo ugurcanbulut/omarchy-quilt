@@ -121,7 +121,11 @@ Panel {
     return w / h >= 2 ? "ultrawide" : "standard"
   }
 
-  function smartSpec(count) { return Layout.smartSpec(monitorShape(), count) }
+  function smartSpec(count) {
+    var shape = monitorShape()
+    var mine = setting("smart", {})
+    return Layout.smartSpec(shape, count, mine && mine[shape] ? toArray(mine[shape]) : null)
+  }
 
   // What a preset button draws: the spec itself, or for Smart the spec it
   // would pick right now.
@@ -139,7 +143,7 @@ Panel {
     var text = (preset.label && preset.label !== preset.spec ? preset.label + " · " : "") + preset.spec
       + (count ? " · " + count + (count === 1 ? " tile" : " tiles") : "")
     var homes = Object.keys(preset.apps || {}).sort(function(a, b) { return a - b }).map(function(tile) { return preset.apps[tile] + " in " + tile })
-    if (homes.length) text += " · " + homes.join(", ")
+    if (homes.length) text += " · " + homes.join(", ") + ". The rocket (or L) also opens them"
     if (preset.custom) text += pendingDelete === preset.customIndex ? ". Right-click again to remove it." : ". Right-click to remove it."
     return text
   }
@@ -236,6 +240,14 @@ Panel {
     root.close()
   }
 
+  function hasApps(preset) { return !!preset && !!preset.apps && Object.keys(preset.apps).length > 0 }
+
+  // Apply a preset, then open its apps that aren't on the workspace yet.
+  function launchPreset(preset) {
+    Quickshell.execDetached(["sh", "-c", '"$0" "$@" && "$0" launch', root.script].concat(presetArgs(preset)))
+    root.close()
+  }
+
   function activate(index) {
     if (index >= 0 && index < flatPresets.length) applyPreset(flatPresets[index])
     else if (index === editIndex) { if (canEdit) startEdit() }
@@ -279,7 +291,18 @@ Panel {
 
   property var builtInSections: []
   onBuiltInSectionsChanged: buildSections(builtInSections)
-  onSettingsChanged: buildSections(builtInSections)
+  onSettingsChanged: {
+    buildSections(builtInSections)
+    configureTimer.restart()
+  }
+
+  // Your Smart layouts and monitor defaults reach the engine through the
+  // script, which reads them from shell.json once the shell has written it.
+  Timer {
+    id: configureTimer
+    interval: 500
+    onTriggered: root.run(["configure"])
+  }
 
   onOpenedChanged: {
     pendingDelete = -1
@@ -440,11 +463,13 @@ Panel {
       onActivateRequested: root.activate(root.cursorIndex)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      // e edits the layout, n draws a new one, m mirrors, s swaps the
-      // focused window into the main tile, x turns Quilt off here.
+      // e edits the layout, n draws a new one, l applies the preset under the
+      // cursor and opens its apps, m mirrors, s swaps the focused window
+      // into the main tile, x turns Quilt off here.
       onTextKey: function(t) {
         if (t === "e") root.activate(root.editIndex)
         else if (t === "n") root.activate(root.newIndex)
+        else if (t === "l" && root.hasApps(root.flatPresets[root.cursorIndex])) root.launchPreset(root.flatPresets[root.cursorIndex])
         else if (t === "m") root.activate(root.mirrorIndex)
         else if (t === "s") root.activate(root.mainIndex)
       }
@@ -563,6 +588,30 @@ Panel {
                       spec: root.previewSpec(presetButton.modelData.spec)
                       windows: root.activeWindows
                       color: root.bar.foreground
+                    }
+
+                    // Presets with app homes: apply and open their apps.
+                    Text {
+                      visible: root.hasApps(presetButton.modelData)
+                      anchors.top: parent.top
+                      anchors.right: parent.right
+                      anchors.margins: Style.space(4)
+                      textFormat: Text.PlainText
+                      text: root.glyph(0xF14DE) // md-rocket-launch
+                      color: root.bar.foreground
+                      opacity: launchMouse.containsMouse ? 1 : 0.55
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.body
+
+                      MouseArea {
+                        id: launchMouse
+                        anchors.fill: parent
+                        anchors.margins: -Style.space(4)
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onContainsMouseChanged: if (containsMouse) root.cursorIndex = presetButton.flatIndex
+                        onClicked: root.launchPreset(presetButton.modelData)
+                      }
                     }
 
                     Text {
@@ -805,8 +854,9 @@ Panel {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             textFormat: Text.PlainText
-            text: "Tile " + dropArea.modelData.index + (dropArea.modelData.home ? " · " + dropArea.modelData.home + "'s tile" : "")
-              + " · click to open an app here"
+            text: "Tile " + dropArea.modelData.index + (dropArea.modelData.home
+              ? " · click to open " + dropArea.modelData.home + " · right-click for another app"
+              : " · click to open an app here")
             color: Color.foreground
             opacity: 0.6
             font.family: Style.font.family
@@ -819,7 +869,12 @@ Panel {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.run(["target", String(dropArea.modelData.index), dropLayer.key])
+          acceptedButtons: Qt.LeftButton | Qt.RightButton
+          // A home tile opens its own app; right-click (or no home) offers them all.
+          onClicked: function(mouse) {
+            var home = dropArea.modelData.home && mouse.button === Qt.LeftButton
+            root.run([home ? "launch" : "target", String(dropArea.modelData.index), dropLayer.key])
+          }
         }
       }
     }

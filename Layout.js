@@ -30,8 +30,12 @@ function gridSpec(n) {
   return parts.join("|")
 }
 
-// The layout Smart picks for n windows on a monitor of this shape.
-function smartSpec(shape, n) {
+// The layout Smart picks for n windows on a monitor of this shape: from
+// `mine` (your own list for the shape, by window count) when it has a usable
+// one, else the built-in one.
+function smartSpec(shape, n, mine) {
+  var own = mine && mine[Math.max(n, 1) - 1]
+  if (typeof own === "string" && parse(own)) return own.replace(/\s/g, "")
   var list = SMART[shape] || SMART.standard
   return list[Math.max(n, 1) - 1] || gridSpec(n)
 }

@@ -28,7 +28,8 @@ Q.runtime_dir = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/quilt"
 -- 12 times so uneven rows (like "12:5") keep their edges on grid lines.
 local MAX_GRID = 144
 
--- How long a tile picked from a drop area waits for its app, in seconds.
+-- How long a tile picked from a drop area waits for its app, and an app
+-- Quilt launched waits to be moved to its workspace, in seconds.
 local PENDING_SECONDS = 60
 
 -- Smart specs by window count, per monitor shape. Past the end of a list the
@@ -40,6 +41,10 @@ local SMART = {
 }
 
 local LAYOUTS = { dwindle = true, scrolling = true, master = true, monocle = true }
+
+-- Settings from shell.json, handed over by the script (Lua can't read JSON):
+-- your own Smart layouts per monitor shape, and default layouts per monitor.
+Q.config = Q.config or { smart = {}, monitors = {} }
 
 ---------------------------------------------------------------- serialization
 
@@ -241,9 +246,13 @@ local function monitor_shape(monitor)
   return "standard"
 end
 
+-- Yours where you set one for this many windows, else the built-in one.
 local function smart_spec(n, monitor)
-  local list = SMART[monitor_shape(monitor)]
-  return list[math.max(n, 1)] or grid_spec(n)
+  local shape = monitor_shape(monitor)
+  local mine = Q.config.smart[shape]
+  local spec = type(mine) == "table" and mine[math.max(n, 1)]
+  if type(spec) == "string" and Q.parse(spec) then return spec end
+  return SMART[shape][math.max(n, 1)] or grid_spec(n)
 end
 
 -- Tiles placed in the area, plus the order they fill in: biggest (the main
@@ -515,12 +524,6 @@ local function set_rule(key, layout, gaps_in, gaps_out)
   Q.rules[key] = { rule = hl.workspace_rule(rule), sig = sig }
 end
 
-local function apply_rule(key)
-  local s = Q.state.workspaces[key]
-  if not s or not s.spec then return set_rule(key, nil) end
-  set_rule(key, LAYOUTS[s.spec] and s.spec or "lua:quilt", s.gaps_in, s.gaps_out)
-end
-
 -- The layout a workspace had before Quilt: what Omarchy's Super+L saved for
 -- it, or the configured default.
 local function omarchy_layout(key)
@@ -531,6 +534,13 @@ local function omarchy_layout(key)
     if saved then return saved end
   end
   return hl.get_config("general.layout") or "dwindle"
+end
+
+local function apply_rule(key)
+  local s = Q.state.workspaces[key]
+  if s and s.off then return set_rule(key, omarchy_layout(key)) end
+  if not s or not s.spec then return set_rule(key, nil) end
+  set_rule(key, LAYOUTS[s.spec] and s.spec or "lua:quilt", s.gaps_in, s.gaps_out)
 end
 
 -- All-empty tiles, for a workspace with no tiled windows to lay out.
@@ -681,8 +691,11 @@ end
 -- ones over (the editor reshaping a layout), or nil for none.
 function Q.set(key, spec, gaps_in, gaps_out, homes)
   local s = ws_state(key)
+  s.from_default, s.off = nil, nil
   if spec == "off" then
-    Q.state.workspaces[key] = nil
+    -- Remembered as your choice, so a monitor default doesn't bring Quilt
+    -- back here.
+    Q.state.workspaces[key] = { off = true }
     -- Disabling Quilt's rule alone doesn't switch the workspace back; a rule
     -- naming its old layout does.
     set_rule(key, omarchy_layout(key))
@@ -833,6 +846,32 @@ function Q.target(key, n)
   return "ok"
 end
 
+-- Quilt is about to launch an app for this workspace. Apps start through
+-- uwsm, so Hyprland can't tell which launch a window came from; instead its
+-- first window is moved to the workspace when it opens.
+function Q.expect(key, app)
+  Q.expected = Q.expected or {}
+  table.insert(Q.expected, { key = key, app = app:lower(), at = os.time() })
+  return "ok"
+end
+
+local function claim(w)
+  if not Q.expected or not w then return end
+  local app = app_of(w)
+  for i = #Q.expected, 1, -1 do
+    if os.time() - Q.expected[i].at > PENDING_SECONDS then table.remove(Q.expected, i) end
+  end
+  for i, e in ipairs(Q.expected) do
+    if e.app == app then
+      table.remove(Q.expected, i)
+      if ws_key(w.workspace) ~= e.key then
+        hl.dispatch(hl.dsp.window.move({ workspace = e.key, follow = false, window = "address:" .. w.address }))
+      end
+      return
+    end
+  end
+end
+
 -- The specs from a list that Quilt can use, one per line, so cycling skips a
 -- broken preset instead of stopping at it.
 function Q.usable(...)
@@ -892,6 +931,63 @@ function Q.area(key)
   return area and json(area) or "{}"
 end
 
+------------------------------------------------------------- monitor defaults
+
+local function same_homes(a, b)
+  a, b = a or {}, b or {}
+  for tile, app in pairs(a) do if b[tile] ~= app then return false end end
+  for tile, app in pairs(b) do if a[tile] ~= app then return false end end
+  return true
+end
+
+-- A workspace on a monitor with a default layout uses it until you pick a
+-- layout (or Off) there yourself; `from_default` marks the ones following it.
+local function follow_default(key, ws)
+  if not key or key:match("^special:") then return end
+  local s = Q.state.workspaces[key]
+  if s and not s.from_default then return end
+  local monitor = ws and ws.monitor
+  local d = monitor and Q.config.monitors[monitor.name]
+  if not d then
+    -- Its default is gone: back to Omarchy's layout.
+    if s then
+      Q.set(key, "off")
+      Q.state.workspaces[key] = nil
+      Q.save()
+    end
+    return
+  end
+  if s and s.spec == d.spec and s.gaps_in == d.gaps_in and s.gaps_out == d.gaps_out and same_homes(s.homes, d.homes) then return end
+  if Q.set(key, d.spec, d.gaps_in, d.gaps_out, d.homes) == "ok" then
+    Q.state.workspaces[key].from_default = true
+    Q.save()
+  end
+end
+
+-- Take your settings: { smart = { [shape] = { specs by window count } },
+-- monitors = { [name] = { spec, gaps_in, gaps_out, homes } } }.
+function Q.configure(config)
+  config = type(config) == "table" and config or {}
+  local smart, monitors = {}, {}
+  for shape, list in pairs(type(config.smart) == "table" and config.smart or {}) do
+    if SMART[shape] and type(list) == "table" then smart[shape] = list end
+  end
+  for name, d in pairs(type(config.monitors) == "table" and config.monitors or {}) do
+    local spec = type(d) == "table" and type(d.spec) == "string" and d.spec:gsub("%s", "")
+    if spec and (spec == "smart" or LAYOUTS[spec] or Q.parse(spec)) then
+      monitors[name] = { spec = spec, gaps_in = tonumber(d.gaps_in), gaps_out = tonumber(d.gaps_out), homes = clean_homes(d.homes, Q.parse(spec)) }
+    end
+  end
+  Q.config = { smart = smart, monitors = monitors }
+  local ok, list = pcall(hl.get_workspaces)
+  for _, ws in ipairs(ok and list or {}) do follow_default(ws_key(ws), ws) end
+  -- Smart workspaces pick up your layouts.
+  for key, s in pairs(Q.state.workspaces) do
+    if s.spec == "smart" then Q.refresh(key) end
+  end
+  return "ok"
+end
+
 ------------------------------------------------------------------------- load
 
 function Q.load()
@@ -930,6 +1026,8 @@ function Q.load()
       end
       Q.dirty = true
     end),
+    hl.on("window.open", function(w) claim(w) end),
+    hl.on("workspace.created", function(ws) follow_default(ws_key(ws), ws) end),
     -- Hyprland has no event for a window starting to float; this one fires
     -- then (and often otherwise, so it only looks things up).
     hl.on("window.update_rules", function(w)

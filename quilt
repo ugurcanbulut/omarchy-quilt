@@ -13,6 +13,8 @@
 #   quilt move <n|empty>     move the focused window to tile n, or the first empty one
 #   quilt swap <a> <b>       swap the windows in tiles a and b
 #   quilt target <n> [ws]    open the app launcher; the new app goes to tile n
+#   quilt launch [n] [ws]    open the apps whose home tiles are empty, or the
+#                            app whose home is tile n
 #   quilt home [n] [app]     make tile n home to an app (default: the focused
 #                            window's app and tile); "none" clears it
 #   quilt homes [json]       print or replace the workspace's app homes
@@ -21,6 +23,8 @@
 #   quilt status             print the active workspace's layout as JSON
 #   quilt area               print the active workspace's tile area as JSON
 #   quilt load               load the layout engine (the bar does this itself)
+#   quilt configure          pass your Smart layouts and monitor defaults from
+#                            shell.json to the engine (the bar does this too)
 #
 # A spec lists column widths on a 10- or 12-column grid; ":n" splits a column
 # into n equal stacked tiles, ":8/4" into tiles of those heights. "@WxH:" lists
@@ -85,6 +89,31 @@ lua() {
   hyprctl repl "$1" 2>&1
 }
 
+# Your Smart layouts and monitor defaults from the widget's settings, as a Lua
+# table for the engine. A monitor default can be a spec or one of your
+# presets by label, with its gaps and apps.
+config_lua() {
+  jq -r '
+    def lua:
+      if type == "object" then "{" + ([to_entries[] | "[\(.key | if test("^[0-9]+$") then . else @json end)]=\(.value | lua)"] | join(",")) + "}"
+      elif type == "array" then "{" + ([to_entries[] | "[\(.key + 1)]=\(.value | lua)"] | join(",")) + "}"
+      elif type == "string" then @json
+      elif type == "number" or type == "boolean" then tostring
+      else "nil" end;
+    [.presets[]? | if type == "string" then { spec: . } else . end | select(.spec | type == "string")] as $presets
+    | def preset($name): first($presets[] | select((.label // "" | ascii_downcase) == ($name | ascii_downcase))) // { spec: $name };
+    { smart: (.smart // {} | if type == "object" then . else {} end),
+      monitors: (.monitors // {} | if type == "object" then . else {} end | with_entries(.value |= (
+        (if type == "string" then preset(.) elif type == "object" then . else {} end)
+        | { spec: ((.spec // "") | gsub(" "; "")), gaps_in: .gapsIn, gaps_out: .gapsOut, homes: (.apps // {}) }))) }
+    | lua' <<<"$1" 2>/dev/null || echo "{}"
+}
+
+configure() {
+  ensure_loaded
+  call configure "$(config_lua "$(widget_settings)")"
+}
+
 load() {
   local result
   # The leading statement keeps hyprctl from reading the file's first
@@ -94,6 +123,7 @@ $(cat "$DIR/engine.lua")")
   [[ $result == ok ]] || { notify "Couldn't load the layout engine: $result"; exit 1; }
   result=$(lua 'return quilt.load()')
   [[ $result == ok ]] || { notify "Couldn't start Quilt: $result"; exit 1; }
+  lua "return quilt.configure($(config_lua "$(widget_settings)"))" >/dev/null
 }
 
 ensure_loaded() {
@@ -152,6 +182,85 @@ set_spec() {
   call set "$(lua_string "$(workspace_key)")" "$(lua_string "$spec")" "${gaps_in:-nil}" "${gaps_out:-nil}" "$(lua_homes "$apps")"
 }
 
+# The desktop entry that starts the app whose windows have this class: by
+# StartupWMClass, by file name, or for a web app by the address in its class
+# (Chrome names an --app window like chrome-web.whatsapp.com__-Default).
+desktop_id_for() {
+  local class=${1,,} dir file host="" dirs found
+  IFS=: read -ra dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  [[ $class =~ ^(chrome|chromium|brave|msedge|vivaldi|helium)-(.+)$ ]] && host=${BASH_REMATCH[2]%%_*}
+  for dir in "${dirs[@]/%//applications}"; do
+    [[ -d $dir ]] || continue
+    # The entry the app launcher shows, rather than a hidden alias.
+    mapfile -t found < <(grep -rilxF -- "StartupWMClass=$class" "$dir" 2>/dev/null)
+    file=""
+    for file in "${found[@]}" ""; do
+      [[ -z $file ]] || ! grep -qix 'NoDisplay=true' "$file" && break
+    done
+    [[ -n $file ]] || file=${found[0]:-}
+    [[ -n $file ]] || file=$(find "$dir" -iname "$class.desktop" -print -quit 2>/dev/null)
+    if [[ -z $file && -n $host ]]; then
+      file=$(grep -rlF -- "$host" "$dir" 2>/dev/null | xargs -r grep -lE '^Exec=.*(omarchy-launch-webapp|--app=)' 2>/dev/null | head -1)
+    fi
+    if [[ -n $file ]]; then
+      file=${file#"$dir"/}
+      file=${file%.desktop}
+      echo "${file//\//-}"
+      return
+    fi
+  done
+  return 1
+}
+
+# Start an app by window class the way Omarchy's launcher does, or a program
+# of that name. Its first window is moved to workspace $1 when it opens.
+start_app() {
+  local key=$1 app=$2 id
+  if id=$(desktop_id_for "$app"); then
+    lua "return quilt.expect($(lua_string "$key"), $(lua_string "$app"))" >/dev/null
+    setsid uwsm-app -- gtk-launch "$id.desktop" >/dev/null 2>&1 &
+  elif command -v "$app" >/dev/null; then
+    lua "return quilt.expect($(lua_string "$key"), $(lua_string "$app"))" >/dev/null
+    setsid uwsm-app -- "$app" >/dev/null 2>&1 &
+  else
+    notify "Couldn't find an app for the window class \"$app\""
+    return 1
+  fi
+}
+
+# launch [n] [ws]: with a tile, that tile's home app (or the app launcher for
+# a tile with no home); without, every home app not open on the workspace.
+launch() {
+  local tile=${1:-} key homes app present
+  if [[ -n ${2:-} ]]; then
+    QUILT_WORKSPACE=$2
+    hyprctl dispatch "hl.dsp.focus({ workspace = $(lua_string "$2") })" >/dev/null
+  fi
+  key=$(workspace_key)
+  ensure_loaded
+  homes=$(lua "return quilt.status($(lua_string "$key"))" | jq -c '.homes // {}')
+  if [[ -n $tile ]]; then
+    app=$(jq -r --arg tile "$tile" '.[$tile] // empty' <<<"$homes")
+    if [[ -z $app ]]; then
+      call target "$(lua_string "$key")" "$tile" && omarchy-menu summon apps
+      return
+    fi
+    call target "$(lua_string "$key")" "$tile" && start_app "$key" "$app"
+    return
+  fi
+  [[ $homes != "{}" ]] || { notify "This workspace has no app homes"; return 1; }
+  present=$(hyprctl clients -j | jq -c --arg key "$key" '[.[] | select(
+    if ($key | test("^[0-9]+$")) then (.workspace.id | tostring) == $key
+    elif ($key | startswith("name:")) then .workspace.name == ($key | ltrimstr("name:"))
+    else .workspace.name == $key end) | .class | ascii_downcase]')
+  # One launch per home whose app has fewer windows here than homes.
+  while read -r app; do
+    [[ -n $app ]] && start_app "$key" "$app"
+  done < <(jq -r --argjson present "$present" '
+    [.[]] | group_by(.) | map(.[0] as $app | ([$present[] | select(. == $app)] | length) as $open
+      | range(0; ([length - $open, 0] | max)) | $app) | .[]' <<<"$homes")
+}
+
 # One of your presets by label (any case) or spec, with its gaps and apps.
 use_preset() {
   local name=$1 preset
@@ -187,6 +296,7 @@ check_requirements
 
 case ${1:-} in
 load) load ;;
+configure) configure ;;
 set) [[ -n ${2:-} ]] || usage; set_spec "$2" "${3:-}" "${4:-}" "${5:-}" ;;
 off) set_spec off ;;
 use) [[ -n ${2:-} ]] || usage; use_preset "$2" ;;
@@ -225,6 +335,10 @@ homes)
     ensure_loaded
     lua "return quilt.status($(lua_string "$(workspace_key)"))" | jq -c .homes
   fi
+  ;;
+launch)
+  [[ -z ${2:-} || $2 =~ ^[0-9]+$ ]] || usage
+  launch "${2:-}" "${3:-}"
   ;;
 edit) omarchy-shell "$ID" edit ;;
 new) omarchy-shell "$ID" create ;;
