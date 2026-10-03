@@ -331,8 +331,13 @@ end
 -- a reload, so every window is looked at).
 local function sync_away()
   local want = {}
-  for _, s in pairs(Q.state.workspaces) do
-    if type(s.pending_nav) == "string" and s.pending then want[s.pending_nav] = true end
+  for key, s in pairs(Q.state.workspaces) do
+    local layout = type(s.pending_nav) == "string" and s.pending and s.spec ~= "smart" and Q.parse(s.spec or "")
+    if layout and layout.tiles[s.pending] then
+      local taken = false
+      for _, tile in pairs(s.assign) do if tile == s.pending then taken = true end end
+      if not taken then want[s.pending_nav] = key end
+    end
   end
   local ok, windows = pcall(hl.get_windows)
   if not ok or not windows then return end
@@ -341,7 +346,10 @@ local function sync_away()
     for _, t in ipairs(w.tags or {}) do
       if (t:gsub("%*$", "")) == AWAY_TAG then has = true end
     end
-    if has ~= (want[tostring(w.stable_id)] == true) then
+    -- Moved to another workspace or floated, it's no longer the one left.
+    local key = want[tostring(w.stable_id)]
+    local away = key ~= nil and not w.floating and w.workspace ~= nil and ws_key(w.workspace) == key
+    if has ~= away then
       hl.dispatch(hl.dsp.window.tag({ tag = (has and "-" or "+") .. AWAY_TAG, window = "address:" .. w.address }))
     end
   end
@@ -766,6 +774,9 @@ local function recalculate(ctx)
         table.insert(placed[tile], targets[id])
       end
     end
+    -- A picked tile a window has taken since (moved or swapped there) holds
+    -- for nothing now.
+    if s.pending and (used[s.pending] or s.pending > #tiles) then s.pending, s.pending_at, s.pending_nav = nil, nil, nil end
     -- More windows than tiles: the extras share the last tile to fill, and
     -- right after this pass become tabs there (unless overflow is "stack").
     local last = fill[#fill]
@@ -1026,6 +1037,10 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
   if not (spec == "smart" or LAYOUTS[spec] or new) then return "bad spec" end
   -- Your choice now, which a monitor default leaves alone.
   s.from_default, s.off = nil, nil
+  if spec:gsub("%s", "") ~= s.spec then
+    s.pending, s.pending_at, s.pending_nav = nil, nil, nil
+    schedule_away()
+  end
   if not new or spec == "smart" then release_tabs(key, s) end
   local old = Q.parse(s.spec or "")
   if homes == "keep" then s.homes = remap_homes(s.homes, old, new) else s.homes = clean_homes(homes, new) end
@@ -1103,6 +1118,7 @@ function Q.mirror(key)
     end
   end
   for id, tile in pairs(s.assign) do s.assign[id] = map[tile] or tile end
+  if s.pending then s.pending = map[s.pending] or s.pending end
   if s.homes then
     local homes = {}
     for tile, app in pairs(s.homes) do homes[map[tile] or tile] = app end
@@ -1297,6 +1313,46 @@ local KEYS = {
   },
 }
 
+-- The Quilt grid the arrow keys act on: the monitor's workspace, unless a
+-- special workspace (the scratchpad) is open over it, or Hyprland lays it
+-- out with something else now (Omarchy's Super+L, say).
+local function grid_here(monitor)
+  if not monitor or monitor.active_special_workspace then return nil end
+  local key = ws_key(monitor.active_workspace)
+  local s = key and Q.state.workspaces[key]
+  local layout = s and s.spec ~= "smart" and Q.parse(s.spec or "")
+  if not layout then return nil end
+  local ok, ws = pcall(hl.get_workspace, key)
+  local now = ok and ws and ws.tiled_layout
+  if now and now ~= "quilt" and now ~= "lua:quilt" then return nil end
+  return key, s, layout
+end
+
+-- The nearest monitor beyond this one in a direction.
+local function monitor_toward(monitor, dir)
+  local function box(m)
+    local w, h = m.width, m.height
+    if rotated(m) then w, h = h, w end
+    local scale = tonumber(m.scale) or 1
+    return { x = m.x, y = m.y, w = w / scale, h = h / scale }
+  end
+  local ok, list = pcall(hl.get_monitors)
+  if not ok or not list then return nil end
+  local here, best, best_gap = box(monitor), nil, nil
+  for _, m in ipairs(list) do
+    if m.name ~= monitor.name then
+      local b = box(m)
+      local gap
+      if dir == "r" then gap = b.x - (here.x + here.w)
+      elseif dir == "l" then gap = here.x - (b.x + b.w)
+      elseif dir == "d" then gap = b.y - (here.y + here.h)
+      else gap = here.y - (b.y + b.h) end
+      if gap > -1 and (not best_gap or gap < best_gap) then best, best_gap = m, gap end
+    end
+  end
+  return best
+end
+
 -- The nearest tile from tile `from` in a direction, overlapping it across
 -- the other axis; on a tie, the one sharing the most of its edge.
 local function neighbour(tiles, from, dir)
@@ -1327,19 +1383,17 @@ end
 function Q.navigate(dir)
   local fallback = function() hl.dispatch(hl.dsp.focus({ direction = dir })) end
   local monitor = hl.get_active_monitor()
-  local key = monitor and ws_key(monitor.active_workspace)
-  local s = key and Q.state.workspaces[key]
-  local layout = s and s.spec ~= "smart" and Q.parse(s.spec or "")
+  local key, s, layout = grid_here(monitor)
   if not layout then return fallback() end
 
   local w = hl.get_active_window()
   local from
-  if s.pending and s.pending_nav then
+  if s.pending and s.pending_nav and layout.tiles[s.pending] then
     from = s.pending
-  elseif w and w.workspace and ws_key(w.workspace) == key then
-    -- A floating window or an extra one beside a tile has no tile to move
-    -- from.
-    from = not w.floating and s.assign[tostring(w.stable_id)] or nil
+  elseif w and w.workspace then
+    -- A window elsewhere, a floating one or an extra one beside a tile has
+    -- no tile here to move from.
+    from = ws_key(w.workspace) == key and not w.floating and s.assign[tostring(w.stable_id)] or nil
     if not from then return fallback() end
   end
   local to
@@ -1351,11 +1405,16 @@ function Q.navigate(dir)
     to = fill[1]
   end
   if not to then
-    if s.pending_nav then
-      s.pending, s.pending_at, s.pending_nav = nil, nil, nil
-      Q.refresh(key)
-    end
-    return fallback()
+    if not s.pending_nav then return fallback() end
+    -- Past the edge from a picked tile: on to the next monitor that way, if
+    -- there is one (moving from the window left behind could land anywhere).
+    local next_mon = monitor_toward(monitor, dir)
+    if not next_mon then return end
+    s.pending, s.pending_at, s.pending_nav = nil, nil, nil
+    Q.save()
+    Q.refresh(key)
+    hl.dispatch(hl.dsp.focus({ monitor = next_mon.name }))
+    return
   end
 
   local owner
@@ -1389,10 +1448,7 @@ end
 -- a tile) it's Hyprland's own swap.
 function Q.swap_toward(dir)
   local fallback = function() hl.dispatch(hl.dsp.window.swap({ direction = dir })) end
-  local monitor = hl.get_active_monitor()
-  local key = monitor and ws_key(monitor.active_workspace)
-  local s = key and Q.state.workspaces[key]
-  local layout = s and s.spec ~= "smart" and Q.parse(s.spec or "")
+  local key, s, layout = grid_here(hl.get_active_monitor())
   if not layout then return fallback() end
   -- A picked empty tile has the keyboard, and no window to move.
   if s.pending and s.pending_nav then return end
@@ -1556,9 +1612,7 @@ function Q.load()
     -- maps the tile's surface again when `grab` changes).
     hl.on("layer.closed", function(ls)
       if not ls or (tonumber(ls.interactivity) or 0) == 0 or tostring(ls.namespace or ""):match("^quilt%-") then return end
-      local monitor = hl.get_active_monitor()
-      local key = monitor and ws_key(monitor.active_workspace)
-      local s = key and Q.state.workspaces[key]
+      local key, s = grid_here(hl.get_active_monitor())
       if s and s.pending_nav then
         s.nav_grab = (s.nav_grab or 0) + 1
         Q.refresh(key)
