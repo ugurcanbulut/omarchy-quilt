@@ -138,6 +138,8 @@ Panel {
     var count = layout ? layout.rects.length : 0
     var text = (preset.label && preset.label !== preset.spec ? preset.label + " · " : "") + preset.spec
       + (count ? " · " + count + (count === 1 ? " tile" : " tiles") : "")
+    var homes = Object.keys(preset.apps || {}).sort(function(a, b) { return a - b }).map(function(tile) { return preset.apps[tile] + " in " + tile })
+    if (homes.length) text += " · " + homes.join(", ")
     if (preset.custom) text += pendingDelete === preset.customIndex ? ". Right-click again to remove it." : ". Right-click to remove it."
     return text
   }
@@ -157,13 +159,20 @@ Panel {
 
   function customPresets() { return toArray(setting("presets", [])) }
 
-  function savePreset(label, spec) {
+  // apps: { "2": "chromium", ... } to keep with the preset, or nothing.
+  function savePreset(label, spec, apps) {
     var list = customPresets()
+    var hasApps = apps && Object.keys(apps).length > 0
     var exists = list.some(function(entry) {
       var p = typeof entry === "string" ? { spec: entry } : entry
-      return p && p.spec === spec && (p.label || "") === label
+      return p && p.spec === spec && (p.label || "") === label && JSON.stringify(p.apps || {}) === JSON.stringify(hasApps ? apps : {})
     })
-    if (!exists) list.push(label ? { spec: spec, label: label } : spec)
+    if (!exists) {
+      var entry = { spec: spec }
+      if (label) entry.label = label
+      if (hasApps) entry.apps = apps
+      list.push(label || hasApps ? entry : spec)
+    }
     saveSettings({ presets: list })
   }
 
@@ -215,11 +224,15 @@ Panel {
     editor.startNew({ screen: focusedScreen(), key: emptyWorkspace(), returnKey: activeKey })
   }
 
+  // Everything the preset says, so the script doesn't fill gaps or apps in
+  // from another preset with the same spec ("-" and "{}" mean none).
+  function presetArgs(preset) {
+    var gap = function(value) { return value !== undefined && value !== null ? String(value) : "-" }
+    return ["set", preset.spec, gap(preset.gapsIn), gap(preset.gapsOut), JSON.stringify(preset.apps || {})]
+  }
+
   function applyPreset(preset) {
-    var args = ["set", preset.spec]
-    if (preset.gapsIn !== undefined || preset.gapsOut !== undefined)
-      args.push(String(preset.gapsIn !== undefined ? preset.gapsIn : ""), String(preset.gapsOut !== undefined ? preset.gapsOut : ""))
-    run(args)
+    run(presetArgs(preset))
     root.close()
   }
 
@@ -256,7 +269,7 @@ Panel {
     var mine = customPresets().map(function(entry, index) {
       var p = typeof entry === "string" ? { spec: entry } : entry
       if (!p || typeof p.spec !== "string" || !Layout.parse(p.spec.replace(/\s/g, ""))) return null
-      return { spec: p.spec.replace(/\s/g, ""), label: p.label || p.spec, gapsIn: p.gapsIn, gapsOut: p.gapsOut, custom: true, customIndex: index }
+      return { spec: p.spec.replace(/\s/g, ""), label: p.label || p.spec, gapsIn: p.gapsIn, gapsOut: p.gapsOut, apps: p.apps, custom: true, customIndex: index }
     }).filter(Boolean)
     var showBuiltIn = setting("builtInPresets", true) !== false
     var list = (builtIn || []).filter(function(s) { return showBuiltIn || s.title === "ADAPTIVE" })
@@ -300,7 +313,7 @@ Panel {
     id: editor
     script: root.script
     tilesInfo: root.activeTiles
-    onSaveRequested: function(label, spec) { root.savePreset(label, spec) }
+    onSaveRequested: function(label, spec, apps) { root.savePreset(label, spec, apps) }
   }
 
   // A config reload starts a fresh Lua state in Hyprland, which drops the
@@ -792,7 +805,8 @@ Panel {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             textFormat: Text.PlainText
-            text: "Tile " + dropArea.modelData.index + " · click to open an app here"
+            text: "Tile " + dropArea.modelData.index + (dropArea.modelData.home ? " · " + dropArea.modelData.home + "'s tile" : "")
+              + " · click to open an app here"
             color: Color.foreground
             opacity: 0.6
             font.family: Style.font.family

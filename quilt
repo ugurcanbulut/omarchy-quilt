@@ -5,6 +5,7 @@
 #   quilt set <spec>         use a layout on the active workspace: 4|8, 3|6|3:2,
 #                            4:8/4, @12x12:0,0,6,12;6,0,6,12, smart, dwindle,
 #                            scrolling, monocle, or off
+#   quilt use <name>         use one of your presets, by its label or spec
 #   quilt next | prev        cycle through the presets
 #   quilt grow | shrink      widen or narrow the focused window's column
 #   quilt mirror             flip the layout left to right
@@ -12,6 +13,9 @@
 #   quilt move <n|empty>     move the focused window to tile n, or the first empty one
 #   quilt swap <a> <b>       swap the windows in tiles a and b
 #   quilt target <n> [ws]    open the app launcher; the new app goes to tile n
+#   quilt home [n] [app]     make tile n home to an app (default: the focused
+#                            window's app and tile); "none" clears it
+#   quilt homes [json]       print or replace the workspace's app homes
 #   quilt edit               edit the active workspace's layout on screen
 #   quilt new                draw a new layout on an empty workspace
 #   quilt status             print the active workspace's layout as JSON
@@ -68,6 +72,14 @@ lua_string() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/\\\\/\\\\\\\\/g; s/'/\\\\'/g")"
 }
 
+# App homes as a Lua argument: {"2":"chromium"} -> {[2]="chromium"}, "keep"
+# stays a string, anything else is nil (none).
+lua_homes() {
+  [[ $1 == keep ]] && { echo "'keep'"; return; }
+  jq -r 'if type == "object" then "{" + ([to_entries[] | select((.key | test("^[0-9]+$")) and (.value | type == "string") and .value != "")
+    | "[\(.key)]=\(.value | ascii_downcase | @json)"] | join(",")) + "}" else "nil" end' <<<"${1:-null}" 2>/dev/null || echo nil
+}
+
 # Run Lua inside Hyprland; repl prints what the code returns.
 lua() {
   hyprctl repl "$1" 2>&1
@@ -117,23 +129,37 @@ current_spec() {
   lua "local s = quilt.state.workspaces[$(lua_string "$(workspace_key)")] return s and s.spec or ''"
 }
 
+# set_spec <spec> [gapsIn] [gapsOut] [apps]: gaps and apps left empty come
+# from your preset with this spec, if there is one; "-" for gaps and "{}" for
+# apps mean none.
 set_spec() {
-  local spec=$1 gaps_in=${2:-} gaps_out=${3:-}
+  local spec=$1 gaps_in=${2:-} gaps_out=${3:-} apps=${4:-} preset
   spec=${spec// /}
   local column='[0-9]+(:[0-9]+(/[0-9]+)*)?' rect='[0-9]+,[0-9]+,[0-9]+,[0-9]+'
   [[ $spec =~ ^(smart|dwindle|scrolling|monocle|off|$column(\|$column)*|@[0-9]+x[0-9]+:$rect(\;$rect)*)$ ]] || {
     notify "\"$1\" isn't a preset Quilt understands"
     exit 1
   }
-  # Custom presets can carry their own gaps. "|" separates them because a
-  # space would collapse when only gapsOut is set.
+  # Custom presets can carry their own gaps and app homes. "|" separates the
+  # gaps because a space would collapse when only gapsOut is set.
+  preset=$(jq -c --arg spec "$spec" 'first(.presets[]? | objects | select((.spec | strings | gsub(" "; "")) == $spec)) // {}' <<<"$(widget_settings)")
   if [[ -z $gaps_in && -z $gaps_out ]]; then
-    IFS='|' read -r gaps_in gaps_out < <(jq -r --arg spec "$spec" '
-      first(.presets[]? | objects | select((.spec | strings | gsub(" "; "")) == $spec)) // {} | "\(.gapsIn // "")|\(.gapsOut // "")"' <<<"$(widget_settings)")
+    IFS='|' read -r gaps_in gaps_out < <(jq -r '"\(.gapsIn // "")|\(.gapsOut // "")"' <<<"$preset")
   fi
+  [[ -n $apps ]] || apps=$(jq -c '.apps // {}' <<<"$preset")
   [[ -z $gaps_in || $gaps_in =~ ^[0-9]+$ ]] || gaps_in=""
   [[ -z $gaps_out || $gaps_out =~ ^[0-9]+$ ]] || gaps_out=""
-  call set "$(lua_string "$(workspace_key)")" "$(lua_string "$spec")" "${gaps_in:-nil}" "${gaps_out:-nil}"
+  call set "$(lua_string "$(workspace_key)")" "$(lua_string "$spec")" "${gaps_in:-nil}" "${gaps_out:-nil}" "$(lua_homes "$apps")"
+}
+
+# One of your presets by label (any case) or spec, with its gaps and apps.
+use_preset() {
+  local name=$1 preset
+  preset=$(jq -c --arg name "$name" '
+    [.presets[]? | if type == "string" then { spec: . } else . end | select(.spec | type == "string")] as $all
+    | first(($all[] | select((.label // "" | ascii_downcase) == ($name | ascii_downcase))), ($all[] | select((.spec | gsub(" "; "")) == ($name | gsub(" "; ""))))) // empty' <<<"$(widget_settings)")
+  [[ -n $preset ]] || { notify "No preset called \"$name\""; exit 1; }
+  set_spec "$(jq -r .spec <<<"$preset")" "$(jq -r '.gapsIn // "-"' <<<"$preset")" "$(jq -r '.gapsOut // "-"' <<<"$preset")" "$(jq -c '.apps // {}' <<<"$preset")"
 }
 
 cycle() {
@@ -161,8 +187,9 @@ check_requirements
 
 case ${1:-} in
 load) load ;;
-set) [[ -n ${2:-} ]] || usage; set_spec "$2" "${3:-}" "${4:-}" ;;
+set) [[ -n ${2:-} ]] || usage; set_spec "$2" "${3:-}" "${4:-}" "${5:-}" ;;
 off) set_spec off ;;
+use) [[ -n ${2:-} ]] || usage; use_preset "$2" ;;
 next) cycle 1 ;;
 prev) cycle -1 ;;
 grow) call grow "$(lua_string "$(workspace_key)")" 1 ;;
@@ -186,6 +213,18 @@ target)
 swap)
   [[ ${2:-} =~ ^[0-9]+$ && ${3:-} =~ ^[0-9]+$ ]] || usage
   call swap "$(lua_string "$(workspace_key)")" "$2" "$3"
+  ;;
+home)
+  [[ -z ${2:-} || $2 =~ ^[0-9]+$ ]] || usage
+  call home "$(lua_string "$(workspace_key)")" "${2:-nil}" "$([[ -n ${3:-} ]] && lua_string "$3" || echo nil)"
+  ;;
+homes)
+  if [[ -n ${2:-} ]]; then
+    call homes "$(lua_string "$(workspace_key)")" "$(lua_homes "$2")"
+  else
+    ensure_loaded
+    lua "return quilt.status($(lua_string "$(workspace_key)"))" | jq -c .homes
+  fi
   ;;
 edit) omarchy-shell "$ID" edit ;;
 new) omarchy-shell "$ID" create ;;

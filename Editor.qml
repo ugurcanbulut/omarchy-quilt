@@ -25,6 +25,10 @@ PanelWindow {
   property string startSpec: ""
   property string gapsIn: ""
   property string gapsOut: ""
+  // App homes the workspace had when editing began ({ "2": "chromium" }),
+  // and whether to keep each tile's app as its home.
+  property var startHomes: ({})
+  property bool rememberApps: false
   property var area: null
   property bool arrived: false
 
@@ -54,11 +58,21 @@ PanelWindow {
   readonly property bool drawValid: drawRect !== null && Layout.valid(rects.concat([drawRect]), gw, gh)
   readonly property int dropTarget: dragTile >= 0 ? tileAt(dragPoint.x, dragPoint.y) : -1
 
-  // App names per tile, once the engine shows the layout drawn here.
-  readonly property var apps: {
-    if (!editing || !tilesInfo || tilesInfo.workspace !== key || !tilesInfo.tiles) return []
-    if (Layout.normalize(tilesInfo.spec) !== spec) return []
-    return tilesInfo.tiles.map(function(t) { return t.app || "" })
+  // App names and app homes per tile, once the engine shows the layout
+  // drawn here.
+  readonly property bool engineCaughtUp: editing && tilesInfo !== null && tilesInfo.workspace === key && !!tilesInfo.tiles
+    && Layout.normalize(tilesInfo.spec) === spec
+  readonly property var apps: engineCaughtUp ? tilesInfo.tiles.map(function(t) { return t.app || "" }) : []
+  readonly property var homes: engineCaughtUp ? tilesInfo.tiles.map(function(t) { return t.home || "" }) : []
+
+  // What Remember apps keeps: each tile's app, or the home it already has.
+  function appsToRemember() {
+    var out = {}
+    apps.forEach(function(app, i) {
+      var name = (app || homes[i] || "").toLowerCase()
+      if (name && name !== "?") out[String(i + 1)] = name
+    })
+    return out
   }
 
   // On a dark scrim, whatever the theme.
@@ -66,7 +80,7 @@ PanelWindow {
   readonly property color accent: Color.accent
   readonly property color warn: Color.urgent
 
-  signal saveRequested(string label, string spec)
+  signal saveRequested(string label, string spec, var apps)
 
   visible: mode !== ""
   color: "transparent"
@@ -112,6 +126,11 @@ PanelWindow {
     originalSpec = options.original
     gapsIn = options.gapsIn !== undefined && options.gapsIn !== null ? String(options.gapsIn) : ""
     gapsOut = options.gapsOut !== undefined && options.gapsOut !== null ? String(options.gapsOut) : ""
+    var had = {}
+    if (tilesInfo && tilesInfo.workspace === key && tilesInfo.tiles)
+      tilesInfo.tiles.forEach(function(t) { if (t.home) had[String(t.index)] = t.home })
+    startHomes = had
+    rememberApps = Object.keys(had).length > 0
     gw = layout.gw
     gh = layout.gh
     rects = layout.rects
@@ -133,6 +152,8 @@ PanelWindow {
     originalSpec = ""
     gapsIn = ""
     gapsOut = ""
+    startHomes = {}
+    rememberApps = false
     gw = 12
     gh = 12
     rects = []
@@ -144,25 +165,35 @@ PanelWindow {
     mode = "new"
   }
 
-  function finish() {
+  // Empty gaps would make the script look them up from a preset; "-" means
+  // the default.
+  function gapArgs() { return [gapsIn || "-", gapsOut || "-"] }
+
+  // keepHomes false: leave the workspace's app homes as the engine has them.
+  function finish(keepHomes) {
     var back = mode === "new" && arrived ? returnKey : ""
+    // Edit: the workspace keeps its apps' homes, or drops them.
+    if (editing && keepHomes !== false) {
+      if (rememberApps) send(["homes", JSON.stringify(appsToRemember())])
+      else if (Object.keys(startHomes).length) send(["homes", "{}"])
+    }
     mode = ""
     if (back) focusWorkspace(back)
   }
 
   function cancel() {
-    if (editing && appliedSpec !== startSpec) send(["set", originalSpec, gapsIn, gapsOut])
-    finish()
+    if (editing && appliedSpec !== startSpec) send(["set", originalSpec].concat(gapArgs(), [JSON.stringify(startHomes)]))
+    finish(false)
   }
 
   function save(use) {
     if (!rects.length || !Layout.parse(spec)) return
     var label = nameField.text.trim()
-    saveRequested(label, spec)
+    saveRequested(label, spec, editing && rememberApps ? appsToRemember() : null)
     if (use && returnKey) {
       var target = returnKey
       finish()
-      send(["set", spec], target)
+      send(["set", spec, "-", "-", "{}"], target)
     } else {
       finish()
     }
@@ -243,7 +274,7 @@ PanelWindow {
   onSpecChanged: {
     if (editing && spec && spec !== appliedSpec && Layout.parse(spec)) {
       appliedSpec = spec
-      send(["set", spec, gapsIn, gapsOut])
+      send(["set", spec].concat(gapArgs(), ["keep"]))
     }
   }
 
@@ -374,6 +405,7 @@ PanelWindow {
           required property int index
 
           readonly property string app: editor.apps[index] || ""
+          readonly property string home: editor.homes[index] || ""
           readonly property bool hot: tileHover.hovered && editor.dragTile < 0 && !editor.dividerDrag && !editor.draw
           readonly property bool target: editor.dropTarget === index && editor.dragTile !== index
           readonly property bool dragged: editor.dragTile === index
@@ -429,7 +461,7 @@ PanelWindow {
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
                 textFormat: Text.PlainText
-                text: tile.app || "empty"
+                text: tile.app || (tile.home ? tile.home + "'s tile" : "empty")
                 visible: editor.editing && editor.apps.length > 0
                 color: editor.ink
                 opacity: 0.8
@@ -726,6 +758,18 @@ PanelWindow {
             opacity: enabled ? 1 : 0.4
             foreground: Color.popups.text
             onClicked: editor.change([])
+          }
+
+          // Each tile's app becomes its home: it opens there from now on.
+          Button {
+            visible: editor.editing
+            iconText: String.fromCodePoint(editor.rememberApps ? 0xF0132 : 0xF0131) // md-checkbox-marked / blank-outline
+            text: "Remember apps"
+            tooltipText: "Each app opens in its tile from now on, on this workspace and in a saved preset"
+            bordered: true
+            selected: editor.rememberApps
+            foreground: Color.popups.text
+            onClicked: editor.rememberApps = !editor.rememberApps
           }
 
           TextField {

@@ -287,7 +287,7 @@ end
 local function write_tiles(key, s, spec, area, tiles, filled, count)
   local out = {}
   for i, t in ipairs(tiles) do
-    out[i] = { index = i, filled = filled[i] ~= nil, app = filled[i] or "", rect = window_rect(t, area, s) }
+    out[i] = { index = i, filled = filled[i] ~= nil, app = filled[i] or "", home = (s.homes or {})[i] or "", rect = window_rect(t, area, s) }
   end
   write_file(tiles_file(key), json({
     workspace = key, spec = spec, smart = s.spec == "smart", windows = count,
@@ -330,6 +330,24 @@ local function tiled_ids(key)
   return ids
 end
 
+-- Hyprland swaps two windows (Super+Shift+arrows) by trading their places in
+-- the list it hands the layout; the layout hears of it no other way. The two
+-- windows, if `ids` is `before` with exactly one pair traded.
+local function traded(before, ids)
+  if not before or #before ~= #ids or #ids < 2 then return nil end
+  local diff = {}
+  for i = 1, #ids do
+    if before[i] ~= ids[i] then
+      diff[#diff + 1] = i
+      if #diff > 2 then return nil end
+    end
+  end
+  local a, b = diff[1], diff[2]
+  if b and before[a] == ids[b] and before[b] == ids[a] then return before[a], before[b] end
+end
+
+local function app_of(window) return window and (window.class or ""):lower() or "" end
+
 local function recalculate(ctx)
   local first = ctx.targets[1] and ctx.targets[1].window
   local key = first and ws_key(first.workspace)
@@ -342,20 +360,30 @@ local function recalculate(ctx)
 
   -- Windows Hyprland hands over now; during a layout switch this can be a
   -- partial list, so a window only loses its tile when it is really gone.
-  local present, targets = {}, {}
+  local present, targets, ids, apps = {}, {}, {}, {}
   for _, t in ipairs(ctx.targets) do
     if t.window then
       local id = tostring(t.window.stable_id)
-      present[id] = true
-      targets[id] = t
+      present[id], targets[id], apps[id] = true, t, app_of(t.window)
+      ids[#ids + 1] = id
     end
   end
   local alive = tiled_ids(key)
   for id in pairs(present) do alive[id] = true end
 
+  Q.seen = Q.seen or {}
+  local x, y = traded(Q.seen[key], ids)
+  Q.seen[key] = ids
+
   local placed = {}
   if smart then
     -- Smart: windows keep their order; the order fills the tiles.
+    if x then
+      for i, id in ipairs(s.order) do
+        if id == x then s.order[i] = y elseif id == y then s.order[i] = x end
+      end
+      Q.dirty = true
+    end
     local order, known = {}, {}
     for _, id in ipairs(s.order) do
       if alive[id] and not known[id] then order[#order + 1], known[id] = id, true end
@@ -376,11 +404,39 @@ local function recalculate(ctx)
       end
     end
   else
-    local assign, used = s.assign, {}
+    local assign, used, owner = s.assign, {}, {}
+    if x then assign[x], assign[y], Q.dirty = assign[y], assign[x], true end
     for id, tile in pairs(assign) do
-      if not alive[id] or tile < 1 or tile > #tiles then assign[id], Q.dirty = nil, true else used[tile] = true end
+      if not alive[id] or tile < 1 or tile > #tiles then assign[id], Q.dirty = nil, true else used[tile], owner[tile] = true, id end
     end
+    local homes = s.homes or {}
     local overflow = {}
+
+    -- A new window's place: the tile picked from a drop area, then its app's
+    -- home, then the first free tile, leaving other apps' empty homes free
+    -- for as long as there's another choice.
+    local function home_for(app)
+      if app == "" then return nil end
+      for _, i in ipairs(fill) do
+        if homes[i] == app and not used[i] then return i end
+      end
+      -- Its home holds another app: that one moves to a free tile no app
+      -- calls home, or joins the overflow if there is none.
+      for _, i in ipairs(fill) do
+        local stranger = owner[i]
+        if homes[i] == app and stranger and apps[stranger] and apps[stranger] ~= app then
+          owner[i], assign[stranger] = nil, nil
+          for _, j in ipairs(fill) do
+            if not used[j] and not homes[j] then
+              assign[stranger], used[j], owner[j] = j, true, stranger
+              return i
+            end
+          end
+          overflow[#overflow + 1] = targets[stranger]
+          return i
+        end
+      end
+    end
     -- A tile picked from a drop area holds for the app launched from it, not
     -- for whatever opens much later.
     if s.pending and os.time() - (s.pending_at or 0) > PENDING_SECONDS then s.pending, s.pending_at = nil, nil end
@@ -389,11 +445,19 @@ local function recalculate(ctx)
       if id and not assign[id] then
         local want = s.pending
         if want and (used[want] or want > #tiles) then want = nil end
+        want = want or home_for(apps[id])
+        if not want then
+          for _, i in ipairs(fill) do if not used[i] and not homes[i] then want = i break end end
+        end
         if not want then
           for _, i in ipairs(fill) do if not used[i] then want = i break end end
         end
         s.pending, s.pending_at = nil, nil
-        if want then assign[id], used[want], Q.dirty = want, true, true else overflow[#overflow + 1] = t end
+        if want then
+          assign[id], used[want], owner[want], Q.dirty = want, true, id, true
+        else
+          overflow[#overflow + 1] = t
+        end
       end
     end
     for id, tile in pairs(assign) do
@@ -544,8 +608,78 @@ local function remap(s, old, new)
   s.assign = moved
 end
 
+-- App homes: { [tile] = app }, apps as lowercase window classes, only for
+-- tiles the layout has.
+local function clean_homes(homes, layout)
+  if type(homes) ~= "table" or not layout then return nil end
+  local out, any = {}, false
+  for key, app in pairs(homes) do
+    local tile = tonumber(key)
+    if tile and layout.tiles[tile] and type(app) == "string" and app ~= "" then out[tile], any = app:lower(), true end
+  end
+  return any and out or nil
+end
+
+-- Homes follow their tiles to a new layout, the way windows do.
+local function remap_homes(homes, old, new)
+  if not homes or not old or not new then return nil end
+  local out, taken, any = {}, {}, false
+  local tiles = {}
+  for tile in pairs(homes) do tiles[#tiles + 1] = tile end
+  table.sort(tiles)
+  for _, tile in ipairs(tiles) do
+    local from = old.tiles[tile]
+    local best, best_area = nil, 0
+    for j, t in ipairs(new.tiles) do
+      local a = from and overlap(from, t) or 0
+      if not taken[j] and a > best_area + 1e-9 then best, best_area = j, a end
+    end
+    if best then out[best], taken[best], any = homes[tile], true, true end
+  end
+  return any and out or nil
+end
+
+-- Move windows already on the workspace into their apps' homes, trading
+-- places with whatever is there.
+local function arrange(key, s)
+  local homes = s.homes
+  if not homes or not Q.parse(s.spec or "") then return end
+  local apps, owner, ids = {}, {}, {}
+  local ok, windows = pcall(hl.get_workspace_windows, key)
+  for _, w in ipairs(ok and windows or {}) do
+    if not w.floating then
+      local id = tostring(w.stable_id)
+      apps[id] = app_of(w)
+      ids[#ids + 1] = id
+    end
+  end
+  table.sort(ids)
+  for id, tile in pairs(s.assign) do if apps[id] then owner[tile] = id end end
+  local tiles = {}
+  for tile in pairs(homes) do tiles[#tiles + 1] = tile end
+  table.sort(tiles)
+  for _, tile in ipairs(tiles) do
+    local app, here = homes[tile], owner[tile]
+    if not (here and apps[here] == app) then
+      local pick
+      for _, id in ipairs(ids) do
+        local at = s.assign[id]
+        if apps[id] == app and not (at and homes[at] == app) then pick = id break end
+      end
+      if pick then
+        local from = s.assign[pick]
+        if here then s.assign[here] = from end
+        if from then owner[from] = here end
+        s.assign[pick], owner[tile] = tile, pick
+      end
+    end
+  end
+end
+
 -- spec: a column or drawn spec, "smart", a built-in Hyprland layout, or "off".
-function Q.set(key, spec, gaps_in, gaps_out)
+-- homes: { [tile] = app } for the new layout, "keep" to carry the current
+-- ones over (the editor reshaping a layout), or nil for none.
+function Q.set(key, spec, gaps_in, gaps_out, homes)
   local s = ws_state(key)
   if spec == "off" then
     Q.state.workspaces[key] = nil
@@ -558,9 +692,12 @@ function Q.set(key, spec, gaps_in, gaps_out)
   end
   local new = Q.parse(spec)
   if not (spec == "smart" or LAYOUTS[spec] or new) then return "bad spec" end
-  remap(s, Q.parse(s.spec or ""), new)
+  local old = Q.parse(s.spec or "")
+  if homes == "keep" then s.homes = remap_homes(s.homes, old, new) else s.homes = clean_homes(homes, new) end
+  remap(s, old, new)
   s.spec = new and spec:gsub("%s", "") or spec
   s.gaps_in, s.gaps_out = tonumber(gaps_in), tonumber(gaps_out)
+  arrange(key, s)
   apply_rule(key)
   Q.save()
   Q.refresh(key)
@@ -630,6 +767,11 @@ function Q.mirror(key)
     end
   end
   for id, tile in pairs(s.assign) do s.assign[id] = map[tile] or tile end
+  if s.homes then
+    local homes = {}
+    for tile, app in pairs(s.homes) do homes[map[tile] or tile] = app end
+    s.homes = homes
+  end
   s.spec = spec
   Q.save()
   Q.refresh(key)
@@ -701,9 +843,47 @@ function Q.usable(...)
   return table.concat(out, "\n")
 end
 
+-- Make tile n the home of an app: by default the focused window's app, and
+-- the tile that window is in. "none" clears the tile's home. The app's
+-- window moves there if it isn't in one of its homes already.
+function Q.home(key, n, app)
+  local s = Q.state.workspaces[key]
+  local layout = s and Q.parse(s.spec or "")
+  if not layout or s.spec == "smart" then return "App homes work on Quilt's grid layouts" end
+  local id, w = active_in(key)
+  local tile = tonumber(n) or (id and s.assign[id])
+  if not tile then return "no focused tiled window" end
+  if not layout.tiles[tile] then return "no such tile" end
+  if app == nil then
+    if not w then return "no focused tiled window" end
+    app = app_of(w)
+  end
+  s.homes = s.homes or {}
+  s.homes[tile] = (app ~= "none" and app ~= "") and app:lower() or nil
+  if not next(s.homes) then s.homes = nil end
+  arrange(key, s)
+  Q.save()
+  Q.refresh(key)
+  return "ok"
+end
+
+-- Replace all of a workspace's homes at once (the editor's Remember apps).
+function Q.homes(key, homes)
+  local s = Q.state.workspaces[key]
+  local layout = s and Q.parse(s.spec or "")
+  if not layout or s.spec == "smart" then return "App homes work on Quilt's grid layouts" end
+  s.homes = clean_homes(homes, layout)
+  arrange(key, s)
+  Q.save()
+  Q.refresh(key)
+  return "ok"
+end
+
 function Q.status(key)
   local s = Q.state.workspaces[key]
-  return json({ workspace = key, spec = s and s.spec or nil, pending = s and s.pending or nil })
+  local homes = {}
+  for tile, app in pairs(s and s.homes or {}) do homes[tostring(tile)] = app end
+  return json({ workspace = key, spec = s and s.spec or nil, pending = s and s.pending or nil, homes = homes })
 end
 
 -- The tile area of a workspace, for the editor on a workspace with no windows.
