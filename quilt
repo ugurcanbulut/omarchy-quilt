@@ -125,10 +125,11 @@ set_spec() {
     notify "\"$1\" isn't a preset Quilt understands"
     exit 1
   }
-  # Custom presets can carry their own gaps.
+  # Custom presets can carry their own gaps. "|" separates them because a
+  # space would collapse when only gapsOut is set.
   if [[ -z $gaps_in && -z $gaps_out ]]; then
-    read -r gaps_in gaps_out < <(jq -r --arg spec "$spec" '
-      first(.presets[]? | objects | select((.spec | gsub(" "; "")) == $spec)) // {} | "\(.gapsIn // "") \(.gapsOut // "")"' <<<"$(widget_settings)")
+    IFS='|' read -r gaps_in gaps_out < <(jq -r --arg spec "$spec" '
+      first(.presets[]? | objects | select((.spec | strings | gsub(" "; "")) == $spec)) // {} | "\(.gapsIn // "")|\(.gapsOut // "")"' <<<"$(widget_settings)")
   fi
   [[ -z $gaps_in || $gaps_in =~ ^[0-9]+$ ]] || gaps_in=""
   [[ -z $gaps_out || $gaps_out =~ ^[0-9]+$ ]] || gaps_out=""
@@ -136,9 +137,13 @@ set_spec() {
 }
 
 cycle() {
-  local step=$1 current list i count
+  local step=$1 current list i count args=()
   current=$(current_spec)
+  # Only presets the engine can use, so a broken one is skipped.
   mapfile -t list < <(presets)
+  for i in "${list[@]}"; do args+=("$(lua_string "${i// /}")"); done
+  ((${#args[@]} > 0)) || exit 1
+  mapfile -t list < <(lua "return quilt.usable($(IFS=,; echo "${args[*]}"))")
   count=${#list[@]}
   ((count > 0)) || exit 1
   for ((i = 0; i < count; i++)); do
