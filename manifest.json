@@ -20,6 +20,7 @@
     "defaults": {
       "builtInPresets": true,
       "dropAreas": true,
+      "navigation": true,
       "scrollResize": true,
       "overflow": "tabs"
     },
@@ -36,6 +37,13 @@
         "type": "boolean",
         "label": "Drop areas on empty tiles",
         "description": "Outline empty tiles with a + you can click to open an app there.",
+        "defaultValue": true
+      },
+      {
+        "key": "navigation",
+        "type": "boolean",
+        "label": "Super+arrows reach empty tiles",
+        "description": "On a grid layout, Super+arrows stop on empty tiles too, and the next app you open goes to the one you stop on. Only while Super+arrows are Omarchy's own focus keys.",
         "defaultValue": true
       },
       {

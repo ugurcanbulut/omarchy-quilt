@@ -296,7 +296,8 @@ end
 local function write_tiles(key, s, spec, area, tiles, filled, count)
   local out = {}
   for i, t in ipairs(tiles) do
-    out[i] = { index = i, filled = filled[i] ~= nil, app = filled[i] or "", home = (s.homes or {})[i] or "", rect = window_rect(t, area, s) }
+    out[i] = { index = i, filled = filled[i] ~= nil, app = filled[i] or "", home = (s.homes or {})[i] or "",
+      selected = s.pending == i and not filled[i], rect = window_rect(t, area, s) }
   end
   write_file(tiles_file(key), json({
     workspace = key, spec = spec, smart = s.spec == "smart", windows = count,
@@ -654,7 +655,7 @@ local function recalculate(ctx)
     end
     -- A tile picked from a drop area holds for the app launched from it, not
     -- for whatever opens much later.
-    if s.pending and os.time() - (s.pending_at or 0) > PENDING_SECONDS then s.pending, s.pending_at = nil, nil end
+    if s.pending and s.pending_at and os.time() - s.pending_at > PENDING_SECONDS then s.pending, s.pending_at, s.pending_nav = nil, nil, nil end
     for _, t in ipairs(ctx.targets) do
       local id = t.window and tostring(t.window.stable_id)
       if id and not assign[id] then
@@ -675,7 +676,7 @@ local function recalculate(ctx)
             end
           end
           want, used[drop] = drop, false
-          s.pending, s.pending_at = nil, nil
+          s.pending, s.pending_at, s.pending_nav = nil, nil, nil
         end
         want = want or home_for(apps[id])
         if not want then
@@ -684,7 +685,7 @@ local function recalculate(ctx)
         if not want then
           for _, i in ipairs(fill) do if not used[i] then want = i break end end
         end
-        s.pending, s.pending_at = nil, nil
+        s.pending, s.pending_at, s.pending_nav = nil, nil, nil
         if want then
           assign[id], used[want], owner[want], Q.dirty = want, true, id, true
         else
@@ -1094,7 +1095,7 @@ end
 function Q.target(key, n)
   local s = Q.state.workspaces[key]
   if not s or not Q.parse(s.spec or "") then return "not a grid layout" end
-  s.pending, s.pending_at = tonumber(n), os.time()
+  s.pending, s.pending_at, s.pending_nav = tonumber(n), os.time(), nil
   return "ok"
 end
 
@@ -1183,6 +1184,113 @@ function Q.area(key)
   return area and json(area) or "{}"
 end
 
+------------------------------------------------------------------- navigation
+
+-- Omarchy's Super+arrow bindings, which Quilt takes over (and gives back).
+local FOCUS_KEYS = {
+  { "l", "SUPER + LEFT", "Focus on left window" },
+  { "r", "SUPER + RIGHT", "Focus on right window" },
+  { "u", "SUPER + UP", "Focus on above window" },
+  { "d", "SUPER + DOWN", "Focus on below window" },
+}
+
+-- The nearest tile from tile `from` in a direction, overlapping it across
+-- the other axis; on a tie, the one sharing the most of its edge.
+local function neighbour(tiles, from, dir)
+  local f, best, best_score = tiles[from], nil, nil
+  for i, t in ipairs(tiles) do
+    if i ~= from then
+      local gap, shared
+      if dir == "l" or dir == "r" then
+        gap = dir == "r" and t.x - (f.x + f.w) or f.x - (t.x + t.w)
+        shared = math.min(f.y + f.h, t.y + t.h) - math.max(f.y, t.y)
+      else
+        gap = dir == "d" and t.y - (f.y + f.h) or f.y - (t.y + t.h)
+        shared = math.min(f.x + f.w, t.x + t.w) - math.max(f.x, t.x)
+      end
+      if gap > -1e-6 and shared > 1e-6 then
+        local score = gap * 1000 - shared
+        if not best or score < best_score - 1e-9 then best, best_score = i, score end
+      end
+    end
+  end
+  return best
+end
+
+-- Super+arrows on a Quilt grid workspace: tile to tile, empty tiles too.
+-- A tile with a window focuses it; an empty one is selected, and the next
+-- app opened on the workspace goes there. Anywhere else (other layouts, past
+-- the last tile) it's Hyprland's own focus move.
+function Q.navigate(dir)
+  local fallback = function() hl.dispatch(hl.dsp.focus({ direction = dir })) end
+  local monitor = hl.get_active_monitor()
+  local key = monitor and ws_key(monitor.active_workspace)
+  local s = key and Q.state.workspaces[key]
+  local layout = s and s.spec ~= "smart" and Q.parse(s.spec or "")
+  if not layout then return fallback() end
+
+  local w = hl.get_active_window()
+  local from
+  if s.pending and s.pending_nav then
+    from = s.pending
+  elseif w and w.workspace and ws_key(w.workspace) == key then
+    -- A floating window or an extra one beside a tile has no tile to move
+    -- from.
+    from = not w.floating and s.assign[tostring(w.stable_id)] or nil
+    if not from then return fallback() end
+  end
+  local to
+  if from then
+    to = neighbour(layout.tiles, from, dir)
+  else
+    -- Nothing focused here yet: start at the main tile.
+    local _, fill = tiles_for({ x = 0, y = 0, w = 1, h = 1 }, layout)
+    to = fill[1]
+  end
+  if not to then
+    if s.pending_nav then
+      s.pending, s.pending_at, s.pending_nav = nil, nil, nil
+      Q.refresh(key)
+    end
+    return fallback()
+  end
+
+  local owner
+  for id, tile in pairs(s.assign) do
+    if tile == to then owner = window_by_id(key, id) end
+  end
+  if owner then
+    s.pending, s.pending_at, s.pending_nav = nil, nil, nil
+    hl.dispatch(hl.dsp.focus({ window = "address:" .. owner.address }))
+  else
+    s.pending, s.pending_at, s.pending_nav = to, nil, true
+  end
+  Q.save()
+  Q.refresh(key)
+end
+
+-- Take Super+arrows over (on), or give Omarchy's bindings back (off) if
+-- Quilt took them. The script only asks for this when they are Omarchy's.
+local function set_navigation(on)
+  if on == (Q.nav_on == true) then return end
+  for _, k in ipairs(FOCUS_KEYS) do pcall(hl.unbind, k[2]) end
+  for _, k in ipairs(FOCUS_KEYS) do
+    local dir, chord, description = k[1], k[2], k[3]
+    if on then
+      hl.bind(chord, function()
+        local ok, err = pcall(function() return quilt.navigate(dir) end)
+        if not ok then
+          quilt.last_error = tostring(err)
+          hl.dispatch(hl.dsp.focus({ direction = dir }))
+        end
+      end, { description = description })
+    else
+      hl.bind(chord, hl.dsp.focus({ direction = dir }), { description = description })
+    end
+  end
+  Q.nav_on = on
+end
+
 ------------------------------------------------------------- monitor defaults
 
 local function same_homes(a, b)
@@ -1231,6 +1339,7 @@ function Q.configure(config)
     end
   end
   Q.config = { smart = smart, monitors = monitors, overflow = config.overflow == "stack" and "stack" or "tabs" }
+  set_navigation(config.navigation == true)
   local ok, list = pcall(hl.get_workspaces)
   for _, ws in ipairs(ok and list or {}) do follow_default(ws_key(ws), ws) end
   -- Smart workspaces pick up your layouts.
@@ -1280,6 +1389,18 @@ function Q.load()
       Q.dirty = true
     end),
     hl.on("window.open", function(w) claim(w) end),
+    -- A window with a tile getting focus ends an arrow-key selection (a new
+    -- window has no tile yet, so its arrival doesn't).
+    hl.on("window.active", function(w)
+      if not w or not w.workspace then return end
+      local key = ws_key(w.workspace)
+      local s = Q.state.workspaces[key]
+      if s and s.pending_nav and s.assign[tostring(w.stable_id)] then
+        s.pending, s.pending_at, s.pending_nav = nil, nil, nil
+        Q.save()
+        Q.refresh(key)
+      end
+    end),
     hl.on("workspace.created", function(ws) follow_default(ws_key(ws), ws) end),
     -- Hyprland has no event for a window starting to float; this one fires
     -- then (and often otherwise, so it only looks things up).

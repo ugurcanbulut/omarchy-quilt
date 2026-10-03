@@ -89,11 +89,21 @@ lua() {
   hyprctl repl "$1" 2>&1
 }
 
+# Whether Super+arrows are still Omarchy's four focus bindings, which Quilt
+# may take over; bindings of your own are left alone.
+omarchy_focus_keys() {
+  hyprctl binds -j 2>/dev/null | jq -e '[.[] | select(.modmask == 64 and (.key | test("^(LEFT|RIGHT|UP|DOWN)$")))] as $b
+    | ($b | length) == 4 and all($b[]; (.description // "") | test("^Focus on (left|right|above|below) window$"))' >/dev/null
+}
+
 # Your Smart layouts and monitor defaults from the widget's settings, as a Lua
 # table for the engine. A monitor default can be a spec or one of your
-# presets by label, with its gaps and apps.
+# presets by label, with its gaps and apps. Arrow-key navigation is on unless
+# you turned it off, and only while Super+arrows are Omarchy's own.
 config_lua() {
-  jq -r '
+  local keys=false
+  omarchy_focus_keys && keys=true
+  jq -r --argjson keys "$keys" '
     def lua:
       if type == "object" then "{" + ([to_entries[] | "[\(.key | if test("^[0-9]+$") then . else @json end)]=\(.value | lua)"] | join(",")) + "}"
       elif type == "array" then "{" + ([to_entries[] | "[\(.key + 1)]=\(.value | lua)"] | join(",")) + "}"
@@ -103,6 +113,7 @@ config_lua() {
     [.presets[]? | if type == "string" then { spec: . } else . end | select(.spec | type == "string")] as $presets
     | def preset($name): first($presets[] | select((.label // "" | ascii_downcase) == ($name | ascii_downcase))) // { spec: $name };
     { overflow: (if .overflow == "stack" then "stack" else "tabs" end),
+      navigation: ((.navigation != false) and $keys),
       smart: (.smart // {} | if type == "object" then . else {} end),
       monitors: (.monitors // {} | if type == "object" then . else {} end | with_entries(.value |= (
         (if type == "string" then preset(.) elif type == "object" then . else {} end)

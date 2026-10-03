@@ -57,6 +57,7 @@ Panel {
   readonly property int dropAreasIndex: -11
   readonly property int scrollIndex: -12
   readonly property int overflowIndex: -13
+  readonly property int navigationIndex: -14
   function monitorIndex(i) { return -20 - i }
   function smartIndex(count) { return -30 - count }
 
@@ -64,6 +65,7 @@ Panel {
   readonly property bool showBuiltIn: setting("builtInPresets", true) !== false
   readonly property bool dropAreasOn: setting("dropAreas", true) !== false
   readonly property bool scrollOn: setting("scrollResize", true) !== false
+  readonly property bool navigationOn: setting("navigation", true) !== false
   readonly property string overflowMode: setting("overflow", "tabs") === "stack" ? "stack" : "tabs"
 
   // Connected monitors, for their default layouts.
@@ -141,7 +143,7 @@ Panel {
   readonly property var navRows: {
     var rows = [{ items: [builtInTabIndex, yoursTabIndex, settingsTabIndex], columns: 3 }], start = 0
     if (tab === "settings" && !picking) {
-      [builtInSettingIndex, dropAreasIndex, scrollIndex, overflowIndex].forEach(function(i) { rows.push({ items: [i], columns: 1 }) })
+      [builtInSettingIndex, dropAreasIndex, navigationIndex, scrollIndex, overflowIndex].forEach(function(i) { rows.push({ items: [i], columns: 1 }) })
       monitors.forEach(function(m, i) { rows.push({ items: [monitorIndex(i)], columns: 1 }) })
       for (var n = 1; n <= 6; n++) rows.push({ items: [smartIndex(n)], columns: 1 })
     }
@@ -172,6 +174,7 @@ Panel {
     if (i === settingsTabIndex) return "Settings: what the popup shows, drop areas, scrolling, extra windows, and layouts for new workspaces and Smart."
     if (i === builtInSettingIndex) return "Show Quilt's built-in layouts on the Built-in tab. Off leaves only the adaptive ones."
     if (i === dropAreasIndex) return "Outline empty tiles with a + you can click to open an app there."
+    if (i === navigationIndex) return "Super+arrows stop on empty tiles too; the next app you open goes to the one you stop on. Needs Omarchy's own Super+arrow keys."
     if (i === scrollIndex) return "Scroll on the bar icon to widen or narrow the focused window's column."
     if (i === overflowIndex) return "More windows than tiles: Tabs puts the extras in the last tile as tabs, Stack squeezes them in beside its window."
     if (i === backIndex) return "Back to the settings without changing anything."
@@ -431,6 +434,7 @@ Panel {
     else if (index === backIndex) closePicker()
     else if (index === builtInSettingIndex) saveSetting("builtInPresets", !showBuiltIn, true)
     else if (index === dropAreasIndex) saveSetting("dropAreas", !dropAreasOn, true)
+    else if (index === navigationIndex) saveSetting("navigation", !navigationOn, true)
     else if (index === scrollIndex) saveSetting("scrollResize", !scrollOn, true)
     else if (index === overflowIndex) saveSetting("overflow", overflowMode === "tabs" ? "stack" : "tabs", "tabs")
     else if (index <= monitorIndex(0) && index > monitorIndex(monitors.length)) openPicker({ kind: "monitor", name: monitors[monitorIndex(0) - index].name })
@@ -1044,6 +1048,7 @@ Panel {
                   model: [
                     { label: "Show built-in layouts", on: root.showBuiltIn, index: root.builtInSettingIndex },
                     { label: "Drop areas on empty tiles", on: root.dropAreasOn, index: root.dropAreasIndex },
+                    { label: "Super+arrows reach empty tiles", on: root.navigationOn, index: root.navigationIndex },
                     { label: "Scroll on the bar icon to resize", on: root.scrollOn, index: root.scrollIndex }
                   ]
 
@@ -1319,7 +1324,8 @@ Panel {
 
   // Drop areas: outlines on the empty tiles of the workspace shown on this
   // bar's monitor. They sit on the layer just above the wallpaper, so windows
-  // cover them, and take clicks only inside the outlines.
+  // cover them, and take clicks only inside the outlines. An empty tile
+  // reached with Super+arrows shows as selected, drop areas on or off.
   PanelWindow {
     id: dropLayer
     readonly property var barWindow: button.QsWindow.window
@@ -1330,12 +1336,12 @@ Panel {
     readonly property var emptyTiles: {
       // Not for Smart: a new window there would reshape the whole layout.
       if (!entry || !Layout.parse(entry.spec) || !tiles || tiles.workspace !== key) return []
-      return tiles.tiles.filter(function(t) { return !t.filled })
+      return tiles.tiles.filter(function(t) { return !t.filled && (root.dropAreasOn || t.selected) })
     }
 
     screen: barWindow ? barWindow.screen : null
     // The editor draws its own tiles.
-    visible: emptyTiles.length > 0 && monitor !== null && editor.mode === "" && root.dropAreasOn
+    visible: emptyTiles.length > 0 && monitor !== null && editor.mode === ""
     color: "transparent"
     anchors { top: true; bottom: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore
@@ -1378,12 +1384,15 @@ Panel {
         width: modelData.rect.w
         height: modelData.rect.h
 
+        readonly property bool selected: modelData.selected === true
+        readonly property color tint: selected ? Color.accent : Color.foreground
+
         Rectangle {
           anchors.fill: parent
           radius: Style.cornerRadius
-          color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, dropMouse.containsMouse ? 0.12 : 0.05)
-          border.color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, dropMouse.containsMouse ? 0.7 : 0.35)
-          border.width: 2
+          color: Qt.rgba(dropArea.tint.r, dropArea.tint.g, dropArea.tint.b, dropArea.selected ? 0.16 : dropMouse.containsMouse ? 0.12 : 0.05)
+          border.color: Qt.rgba(dropArea.tint.r, dropArea.tint.g, dropArea.tint.b, dropArea.selected ? 1 : dropMouse.containsMouse ? 0.7 : 0.35)
+          border.width: dropArea.selected ? 4 : 2
 
           Behavior on color { ColorAnimation { duration: 120 } }
         }
@@ -1396,8 +1405,8 @@ Panel {
             anchors.horizontalCenter: parent.horizontalCenter
             textFormat: Text.PlainText
             text: "+"
-            color: Color.foreground
-            opacity: 0.7
+            color: dropArea.tint
+            opacity: dropArea.selected ? 1 : 0.7
             font.family: Style.font.family
             font.pixelSize: Style.space(72)
           }
@@ -1405,11 +1414,13 @@ Panel {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             textFormat: Text.PlainText
-            text: "Tile " + dropArea.modelData.index + (dropArea.modelData.home
+            text: "Tile " + dropArea.modelData.index + (dropArea.selected
+              ? " · the next app you open goes here"
+              : dropArea.modelData.home
               ? " · click to open " + dropArea.modelData.home + " · right-click for another app"
               : " · click to open an app here")
-            color: Color.foreground
-            opacity: 0.6
+            color: dropArea.tint
+            opacity: dropArea.selected ? 0.9 : 0.6
             font.family: Style.font.family
             font.pixelSize: Style.font.heading
           }

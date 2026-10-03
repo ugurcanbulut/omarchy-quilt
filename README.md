@@ -38,6 +38,7 @@ The popup has two tabs. **Built-in** holds 25 layouts in four groups (columns, m
 - **Windows keep their tiles.** Close a window and its tile stays empty instead of the others shifting around. The next window you open fills it.
 - **Extra windows become tabs.** With more windows than tiles, the extras join the last tile as tabs (Hyprland's window groups) and move back out into their own tiles as soon as there's room, oldest first. A group you make yourself with Super+G takes one tile and keeps it while you switch tabs.
 - **Drop areas.** Empty tiles show an outline with a "+". Click one to open the app launcher; the app you pick opens in that tile.
+- **Super+arrows reach empty tiles.** On a grid layout, Omarchy's Super+arrows move tile to tile, empty ones included. Stop on an empty tile and it lights up; the next app you open goes there, whether from the launcher or a key binding. A tile with a window focuses that window, as before.
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
 - **App homes and one-click launch.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right, and one click opens the apps that aren't there yet. See [App homes](#app-homes).
 - **Monitor defaults.** New workspaces on a monitor can start with a layout of your choice, like Smart on an ultrawide.
@@ -102,17 +103,6 @@ omarchy bar move ugurcanbulut.quilt --section right --index 0
 
 Layouts saved from the editor show up on the popup's **Yours** tab and in the next/previous cycle. Right-click one twice to remove it.
 
-## Settings
-
-The gear tab in the popup holds Quilt's settings:
-
-- **Show built-in layouts**, **Drop areas on empty tiles** and **Scroll on the bar icon to resize**, each on or off.
-- **Extra windows**: as tabs in the last tile, or stacked there.
-- **New workspaces start with**: a default layout for each connected monitor (see [monitor defaults](#your-own-smart-and-monitor-defaults)).
-- **Smart on … monitors**: the layout Smart uses for 1 to 6 windows on monitors shaped like the one you're on.
-
-Choosing a layout opens a picker of the same pictures as the other tabs. Everything is saved to the Quilt entry in `~/.config/omarchy/shell.json`, which you can also edit by hand.
-
 They live in a `presets` list on the Quilt entry in your bar layout in `~/.config/omarchy/shell.json`, where you can also add them by hand:
 
 ```json
@@ -128,6 +118,18 @@ They live in a `presets` list on the Quilt entry in your bar layout in `~/.confi
 - `quilt use Dev` applies a preset by its label, which is handy for key bindings.
 - Add `"builtInPresets": false` to keep only the adaptive layouts (Smart, Dwindle, Scrolling, Monocle) on the Built-in tab.
 - Add `"overflow": "stack"` to stack extra windows in the last tile instead of making them tabs.
+- Add `"navigation": false` to give Super+arrows back to Hyprland's plain focus move.
+
+## Settings
+
+The gear tab in the popup holds Quilt's settings:
+
+- **Show built-in layouts**, **Drop areas on empty tiles**, **Super+arrows reach empty tiles** and **Scroll on the bar icon to resize**, each on or off.
+- **Extra windows**: as tabs in the last tile, or stacked there.
+- **New workspaces start with**: a default layout for each connected monitor (see [monitor defaults](#your-own-smart-and-monitor-defaults)).
+- **Smart on … monitors**: the layout Smart uses for 1 to 6 windows on monitors shaped like the one you're on.
+
+Choosing a layout opens a picker of the same pictures as the other tabs. Everything is saved to the Quilt entry in `~/.config/omarchy/shell.json`, which you can also edit by hand.
 
 ### Your own Smart and monitor defaults
 
@@ -155,7 +157,7 @@ In the popup, the arrow keys and Enter pick a layout, and these act right away:
 | `s` | Focused window to the main tile |
 | `x` | Off |
 
-Quilt doesn't add key bindings of its own. To add some, put lines like these in `~/.config/hypr/bindings.lua`:
+Super+arrows on a grid layout move between tiles, empty ones included (see [Features](#features)). Quilt takes them over only while they are Omarchy's own focus bindings and hands them back when you turn the setting off; if you've bound them to something else, Quilt leaves them alone. Otherwise Quilt doesn't add key bindings of its own. To add some, put lines like these in `~/.config/hypr/bindings.lua`:
 
 ```lua
 local quilt = os.getenv("HOME") .. "/.config/omarchy/plugins/ugurcanbulut.quilt/quilt"
