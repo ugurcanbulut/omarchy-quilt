@@ -31,6 +31,7 @@ PanelWindow {
   property int gw: 12
   property int gh: 12
   property var rects: []
+  // Undo steps, each { gw, gh, rects }: New can switch grid sizes.
   property var history: []
   property string appliedSpec: ""
   property var queue: []
@@ -40,7 +41,6 @@ PanelWindow {
   property var dividerDrag: null
   property int dragTile: -1
   property point dragPoint: Qt.point(0, 0)
-  property int hoverTile: -1
 
   readonly property bool editing: mode === "edit"
   readonly property string spec: rects.length ? Layout.format(gw, gh, rects) : ""
@@ -94,7 +94,6 @@ PanelWindow {
     draw = null
     dividerDrag = null
     dragTile = -1
-    hoverTile = -1
     queue = []
     nameField.text = ""
     card.x = Qt.binding(function() { return (editor.width - card.width) / 2 })
@@ -157,7 +156,7 @@ PanelWindow {
   }
 
   function save(use) {
-    if (!rects.length) return
+    if (!rects.length || !Layout.parse(spec)) return
     var label = nameField.text.trim()
     saveRequested(label, spec)
     if (use && returnKey) {
@@ -169,22 +168,29 @@ PanelWindow {
     }
   }
 
+  function remember(previous) {
+    history = history.concat([{ gw: gw, gh: gh, rects: previous }]).slice(-50)
+  }
+
   // Changes go through here so they can be undone.
   function change(next) {
     if (!next) return
-    history = history.concat([rects]).slice(-50)
+    remember(rects)
     rects = Layout.sortRects(next)
   }
 
   function undo() {
     if (!history.length) return
-    rects = history[history.length - 1]
+    var step = history[history.length - 1]
     history = history.slice(0, -1)
+    gw = step.gw
+    gh = step.gh
+    rects = step.rects
   }
 
   function setGrid(n) {
     if (gw === n && gh === n) return
-    history = history.concat([rects]).slice(-50)
+    remember(rects)
     rects = []
     gw = n
     gh = n
@@ -235,7 +241,7 @@ PanelWindow {
   }
 
   onSpecChanged: {
-    if (editing && spec && spec !== appliedSpec) {
+    if (editing && spec && spec !== appliedSpec && Layout.parse(spec)) {
       appliedSpec = spec
       send(["set", spec, gapsIn, gapsOut])
     }
@@ -579,7 +585,7 @@ PanelWindow {
             onReleased: {
               var drag = editor.dividerDrag
               editor.dividerDrag = null
-              if (drag && drag.pos !== drag.divider.pos) editor.history = editor.history.concat([drag.start]).slice(-50)
+              if (drag && drag.pos !== drag.divider.pos) editor.remember(drag.start)
               Qt.callLater(editor.refreshDividers)
             }
           }

@@ -6,7 +6,35 @@
 
 var EPS = 1e-6
 
+// Keep in sync with MAX_GRID and SMART in engine.lua.
+var MAX_GRID = 144
+
+var SMART = {
+  standard: ["12", "6|6", "6|6:2", "6:2|6:2", "4|4:2|4:2", "4:2|4:2|4:2"],
+  ultrawide: ["2|8|2", "6|6", "3|6|3", "3|6|3:2", "3:2|6|3:2", "4:2|4:2|4:2"],
+  portrait: ["12", "12:2", "12:3", "6:2|6:2", "6:2|6:3", "6:3|6:3"]
+}
+
 function near(a, b) { return Math.abs(a - b) < 1e-4 }
+
+// An even grid for n windows, as the engine's grid_spec builds it.
+function gridSpec(n) {
+  var least = Math.min(Math.ceil(Math.sqrt(n)), 4)
+  var cols = [1, 2, 3, 4, 6, 12].filter(function(c) { return c >= least && c * 8 >= n })[0] || 12
+  var parts = [], left = n
+  for (var c = 1; c <= cols; c++) {
+    var rows = Math.max(1, Math.min(8, Math.ceil(left / (cols - c + 1))))
+    parts.push((12 / cols) + ":" + rows)
+    left -= rows
+  }
+  return parts.join("|")
+}
+
+// The layout Smart picks for n windows on a monitor of this shape.
+function smartSpec(shape, n) {
+  var list = SMART[shape] || SMART.standard
+  return list[Math.max(n, 1) - 1] || gridSpec(n)
+}
 
 function sortRects(rects) {
   return rects.slice().sort(function(a, b) {
@@ -38,11 +66,16 @@ function parse(spec) {
   var m = spec.match(/^@(\d+)x(\d+):(.+)$/)
   if (m) {
     var gw = parseInt(m[1]), gh = parseInt(m[2]), rects = []
-    var parts = m[3].split(";")
+    if (gw < 1 || gh < 1 || gw > MAX_GRID || gh > MAX_GRID) return null
+    var parts = m[3].split(";").filter(function(part) { return part !== "" })
     for (var i = 0; i < parts.length; i++) {
+      if (!/^\d+,\d+,\d+,\d+$/.test(parts[i])) return null
       var p = parts[i].split(",").map(Number)
-      if (p.length !== 4 || p.some(isNaN) || p[2] < 1 || p[3] < 1 || p[0] + p[2] > gw || p[1] + p[3] > gh) return null
-      rects.push({ x: p[0], y: p[1], w: p[2], h: p[3] })
+      var r = { x: p[0], y: p[1], w: p[2], h: p[3] }
+      if (r.w < 1 || r.h < 1 || r.x + r.w > gw || r.y + r.h > gh) return null
+      // Overlapping tiles would stack windows on top of each other.
+      if (rects.some(function(other) { return overlaps(r, other) })) return null
+      rects.push(r)
     }
     return rects.length ? { gw: gw, gh: gh, rects: sortRects(rects) } : null
   }

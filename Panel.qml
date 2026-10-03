@@ -29,12 +29,8 @@ Panel {
   property var summary: ({})
   property var sections: []
 
-  // Keep in sync with SMART in engine.lua.
-  readonly property var smartSpecs: ({
-    standard: ["12", "6|6", "6|6:2", "6:2|6:2", "4|4:2|4:2", "4:2|4:2|4:2"],
-    ultrawide: ["2|8|2", "6|6", "3|6|3", "3|6|3:2", "3:2|6|3:2", "4:2|4:2|4:2"],
-    portrait: ["12", "12:2", "12:3", "6:2|6:2", "6:2|6:3", "6:3|6:3"]
-  })
+  // Scroll deltas not yet worth a whole step (touchpads send many small ones).
+  property real wheelAccumulator: 0
 
   property int cursorIndex: -1
   // A preset of yours that one more right-click removes.
@@ -65,6 +61,26 @@ Panel {
   readonly property int mainIndex: flatPresets.length + 3
   readonly property int offIndex: flatPresets.length + 4
 
+  // The popup's rows as the arrow keys see them: four presets to a row in
+  // each section, then Edit | New, then Mirror | To main | Off.
+  readonly property var navRows: {
+    var rows = [], start = 0
+    sections.forEach(function(section) {
+      for (var i = 0; i < section.presets.length; i += 4) {
+        var items = []
+        for (var j = i; j < Math.min(i + 4, section.presets.length); j++) items.push(start + j)
+        rows.push({ items: items, columns: 4 })
+      }
+      start += section.presets.length
+    })
+    rows.push({ items: [editIndex, newIndex], columns: 2 })
+    rows.push({ items: [mirrorIndex, mainIndex, offIndex], columns: 3 })
+    return rows
+  }
+
+  // A layout the bar icon's scroll wheel can resize: columns, not drawn.
+  readonly property bool resizable: activeSpec !== "" && activeSpec.charAt(0) !== "@" && Layout.parse(activeSpec) !== null
+
   // The line under the buttons describes whatever the cursor is on.
   readonly property string hint: {
     var i = cursorIndex
@@ -75,7 +91,7 @@ Panel {
     if (i === newIndex) return "Draw a new layout on an empty workspace, with any tiles you like, and save it as a preset."
     if (i === mirrorIndex) return "Flip the layout left to right. Windows go with their tiles."
     if (i === mainIndex) return "Swap the focused window into the biggest tile."
-    if (i === offIndex) return "Back to Omarchy's default layout on this workspace."
+    if (i === offIndex) return "Back to Omarchy's layout on this workspace: the default, or what you picked with Super+L."
     return "Scroll on the bar icon to widen or narrow the focused window's column. Right-click it for the next preset."
   }
 
@@ -98,14 +114,14 @@ Panel {
     var m = Hyprland.focusedMonitor
     if (!m) return "standard"
     var w = m.width, h = m.height
+    // Hyprland reports the mode size; odd transforms turn it a quarter.
+    var info = m.lastIpcObject
+    if (info && info.transform % 2 === 1) { var t = w; w = h; h = t }
     if (h > w) return "portrait"
     return w / h >= 2 ? "ultrawide" : "standard"
   }
 
-  function smartSpec(count) {
-    var list = smartSpecs[monitorShape()]
-    return list[Math.max(count, 1) - 1] || list[list.length - 1]
-  }
+  function smartSpec(count) { return Layout.smartSpec(monitorShape(), count) }
 
   // What a preset button draws: the spec itself, or for Smart the spec it
   // would pick right now.
@@ -174,6 +190,8 @@ Panel {
   }
 
   function startEdit() {
+    // One editor session at a time.
+    if (editor.mode !== "") return
     if (!canEdit) {
       Quickshell.execDetached(["notify-send", "-a", "Quilt", "Quilt", "Pick a grid layout for this workspace first, then edit it."])
       return
@@ -186,6 +204,7 @@ Panel {
   }
 
   function startNew() {
+    if (editor.mode !== "") return
     root.close()
     Hyprland.refreshWorkspaces()
     editor.startNew({ screen: focusedScreen(), key: emptyWorkspace(), returnKey: activeKey })
@@ -210,8 +229,22 @@ Panel {
 
   function moveCursor(dx, dy) {
     if (cursorIndex < 0) { cursorIndex = 0; return }
-    var next = cursorIndex + dx + dy * 4
-    cursorIndex = Math.max(0, Math.min(offIndex, next))
+    if (dx !== 0) {
+      cursorIndex = Math.max(0, Math.min(offIndex, cursorIndex + dx))
+      return
+    }
+    // Up and down go to the item underneath, even where rows hold different
+    // numbers of buttons.
+    for (var r = 0; r < navRows.length; r++) {
+      var column = navRows[r].items.indexOf(cursorIndex)
+      if (column < 0) continue
+      var target = navRows[r + dy]
+      if (!target) return
+      // On a boundary between two buttons, take the left one.
+      var centre = (column + 0.5) / navRows[r].columns
+      cursorIndex = target.items[Math.min(target.items.length - 1, Math.max(0, Math.ceil(centre * target.columns) - 1))]
+      return
+    }
   }
 
   function buildSections(builtIn) {
@@ -349,12 +382,18 @@ Panel {
     text: grid ? "" : root.glyph(root.builtInLayouts[root.activeSpec] || 0xF0574)
     iconComponent: grid ? miniQuilt : null
     tooltipText: "Quilt · " + (root.activeSpec || "Omarchy default") + (root.activeSpec === "smart" && root.activeTiles ? " (" + root.activeTiles.spec + ")" : "")
-      + "\nScroll to resize · right-click for the next preset"
+      + (root.resizable ? "\nScroll to resize · right-click for the next preset" : "\nRight-click for the next preset")
     onPressed: function(b) {
       if (b === Qt.RightButton) root.run(["next"])
       else root.toggle()
     }
-    onWheelMoved: function(delta) { root.run([delta > 0 ? "grow" : "shrink"]) }
+    // One notch is one column; a touchpad swipe adds up to whole notches.
+    onWheelMoved: function(delta) {
+      if (!root.resizable) return
+      var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
+      root.wheelAccumulator = wheel.remainder
+      for (var i = 0; i < Math.abs(wheel.steps); i++) root.run([wheel.steps > 0 ? "grow" : "shrink"])
+    }
   }
 
   Component {
