@@ -28,6 +28,17 @@ The widget joins the right side of the bar. To move it:
 omarchy bar move ugurcanbulut.quilt --section right --index 0
 ```
 
+### Remove
+
+```bash
+omarchy plugin remove ugurcanbulut.quilt
+hyprctl reload
+```
+
+The reload drops Quilt's layout engine from the running Hyprland: workspaces go back to Omarchy's layout, and Super+arrows, Super+Shift+arrows and Super+Alt+L back to Omarchy. Saved layouts stay in `~/.local/state/quilt/` and your presets on the Quilt entry in `~/.config/omarchy/shell.json`, in case you reinstall; delete them if you won't.
+
+### Requirements
+
 Quilt needs Omarchy 4 with Hyprland 0.55 or newer (Hyprland's Lua config), and `jq`, which a standard Omarchy install has. Nothing is written to your Hyprland config: Quilt registers its layout while Hyprland runs, and removing the plugin leaves no trace.
 
 ## Features
