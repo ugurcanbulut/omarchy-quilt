@@ -757,11 +757,17 @@ end
 
 -- When the last tiled window leaves a workspace (closed, floated or moved
 -- away), Hyprland doesn't lay it out again, so its tiles are marked empty
--- here. `gone` is the window leaving, which may still be listed.
+-- here. `gone` is the window leaving, which may still be listed; so may
+-- others closing at the same moment, hence the short wait.
 local function settle(key, gone)
-  local left = tiled_ids(key)
-  left[gone] = nil
-  if next(left) == nil then write_empty(key) end
+  hl.timer(function()
+    local ok, err = pcall(function()
+      local left = tiled_ids(key)
+      left[gone] = nil
+      if next(left) == nil then write_empty(key) end
+    end)
+    if not ok then Q.last_error = tostring(err) end
+  end, { timeout = 150, type = "oneshot" })
 end
 
 local function forget(s, id)
