@@ -122,6 +122,11 @@ local function load_state()
   local ok, data = pcall(dofile, Q.state_dir .. "/state.lua")
   Q.state = (ok and type(data) == "table") and data or {}
   Q.state.workspaces = Q.state.workspaces or {}
+  -- Every entry has these, Off ones too: the hooks look through them all.
+  -- (Quilt 0.1.2-0.1.4 left them out of Off entries.)
+  for _, s in pairs(Q.state.workspaces) do
+    s.assign, s.order = s.assign or {}, s.order or {}
+  end
   -- Window ids start over with a new Hyprland session, so remembered tiles
   -- from the last one mean nothing.
   local session = os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""
@@ -947,7 +952,7 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
     release_tabs(key, s)
     -- Remembered as your choice, so a monitor default doesn't bring Quilt
     -- back here.
-    Q.state.workspaces[key] = { off = true }
+    Q.state.workspaces[key] = { off = true, assign = {}, order = {} }
     -- Disabling Quilt's rule alone doesn't switch the workspace back; a rule
     -- naming its old layout does.
     set_rule(key, omarchy_layout(key))
