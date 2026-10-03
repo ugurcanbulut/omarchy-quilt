@@ -1009,7 +1009,6 @@ end
 -- ones over (the editor reshaping a layout), or nil for none.
 function Q.set(key, spec, gaps_in, gaps_out, homes)
   local s = ws_state(key)
-  s.from_default, s.off = nil, nil
   if spec == "off" then
     release_tabs(key, s)
     -- Remembered as your choice, so a monitor default doesn't bring Quilt
@@ -1025,6 +1024,8 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
   end
   local new = Q.parse(spec)
   if not (spec == "smart" or LAYOUTS[spec] or new) then return "bad spec" end
+  -- Your choice now, which a monitor default leaves alone.
+  s.from_default, s.off = nil, nil
   if not new or spec == "smart" then release_tabs(key, s) end
   local old = Q.parse(s.spec or "")
   if homes == "keep" then s.homes = remap_homes(s.homes, old, new) else s.homes = clean_homes(homes, new) end
@@ -1070,6 +1071,7 @@ function Q.grow(key, delta)
     cols[col].span = cols[col].span + delta
   end
   s.spec = format_columns(layout)
+  s.from_default = nil
   Q.save()
   Q.refresh(key)
   return "ok"
@@ -1107,6 +1109,7 @@ function Q.mirror(key)
     s.homes = homes
   end
   s.spec = spec
+  s.from_default = nil
   Q.save()
   Q.refresh(key)
   return "ok"
@@ -1239,6 +1242,7 @@ function Q.home(key, n, app)
   s.homes = s.homes or {}
   s.homes[tile] = (app ~= "none" and app ~= "") and app:lower() or nil
   if not next(s.homes) then s.homes = nil end
+  s.from_default = nil
   arrange(key, s)
   Q.save()
   Q.refresh(key)
@@ -1251,6 +1255,7 @@ function Q.homes(key, homes)
   local layout = s and Q.parse(s.spec or "")
   if not layout or s.spec == "smart" then return "App homes work on Quilt's grid layouts" end
   s.homes = clean_homes(homes, layout)
+  s.from_default = nil
   arrange(key, s)
   Q.save()
   Q.refresh(key)
