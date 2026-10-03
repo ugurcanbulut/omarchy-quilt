@@ -32,7 +32,7 @@ Quilt needs Omarchy 4 with Hyprland 0.55 or newer (Hyprland's Lua config), and `
 
 ## Features
 
-<img src="docs/layouts.webp" alt="The same four windows moving through seven layouts, their labels following them" width="100%">
+https://github.com/user-attachments/assets/c50ab122-fff1-4100-9abc-6da8cd3f5cba
 
 ### Layouts
 
@@ -138,7 +138,7 @@ While editing, **Keep homes**, **Remember apps** and **Clear homes** choose what
 
 Drawing a layout, naming it and using it:
 
-<img src="docs/new-layout.webp" alt="Four tiles drawn on the grid, the layout named Focus and saved, and the workspace's windows moving into it" width="100%">
+https://github.com/user-attachments/assets/13edcbea-128e-4dd4-ab7d-b22f3bd1176a
 
 ## App homes
 
