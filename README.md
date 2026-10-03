@@ -12,7 +12,7 @@ Pick a layout and your windows arrange into it. Draw your own on screen.
 
 [Install](#install) · [Features](#features) · [Keys](#keys) · [Editor](#the-editor) · [App homes](#app-homes) · [Settings](#settings) · [Command line](#command-line)
 
-<img src="docs/screenshot-v0.1.1.png" alt="Four windows in the 3:2|6|3:2 layout, an empty tile showing its drop area, and the Quilt popup open from the bar" width="100%">
+<img src="docs/hero.png" alt="Four labelled windows in the 3:2|6|3:2 layout, an empty tile showing its drop area, and the Quilt popup open from the bar" width="100%">
 
 </div>
 
@@ -32,6 +32,8 @@ Quilt needs Omarchy 4 with Hyprland 0.55 or newer (Hyprland's Lua config), and `
 
 ## Features
 
+<img src="docs/layouts.webp" alt="The same four windows moving through seven layouts, their labels following them" width="100%">
+
 ### Layouts
 
 - **28 built-in layouts** in four groups: columns, main + stack, grids and rows, and adaptive ones. The popup draws each as a small picture of your current number of windows; hover one to read what it does.
@@ -40,6 +42,8 @@ Quilt needs Omarchy 4 with Hyprland 0.55 or newer (Hyprland's Lua config), and `
 - **Hyprland's own layouts** (dwindle, scrolling, monocle) are one click away, and **Off** hands the workspace back to Omarchy.
 - **Per workspace, remembered** across Hyprland reloads and reboots. The bar icon draws the current workspace's layout.
 - **Monitor defaults:** new workspaces on a monitor can start with a layout of your choice, like Smart on an ultrawide.
+
+<p align="center"><img src="docs/popup.png" alt="The popup's three tabs: Built-in layouts drawn as pictures, Yours with a saved layout, and the settings" width="80%"></p>
 
 ### Windows
 
@@ -53,6 +57,8 @@ Quilt needs Omarchy 4 with Hyprland 0.55 or newer (Hyprland's Lua config), and `
 ### Keyboard
 
 - **Arrow keys reach empty tiles.** On a grid layout, <kbd>Super</kbd> + arrows move tile to tile, empty ones included. An empty tile you stop on lights up and takes the keyboard: <kbd>Enter</kbd> opens the app launcher for it, <kbd>Esc</kbd> goes back to your window, and any app you open meanwhile lands there. The window you left shows an inactive border until you move on.
+
+<img src="docs/keyboard.png" alt="An empty tile picked with Super+arrows, lit up with: Tile 5, Enter to open an app here, Esc to cancel" width="100%">
 
 ### Apps in their place
 
@@ -119,7 +125,20 @@ The popup has two buttons for making layouts of your own:
 
 While editing, **Keep homes**, **Remember apps** and **Clear homes** choose what happens to the [app homes](#app-homes). <kbd>Ctrl</kbd> <kbd>Z</kbd> undoes the last change, and the toolbar can be dragged by its title if it covers a tile.
 
-<img src="docs/editor-v0.1.1.png" alt="The editor over the same workspace: each tile labeled with its number, app and size, and the toolbar at the bottom" width="100%">
+<table>
+<tr>
+<td width="50%"><img src="docs/edit.png" alt="Edit: each tile of the workspace labeled with its number, app and size, the toolbar at the bottom"></td>
+<td width="50%"><img src="docs/new.png" alt="New: three tiles drawn on a blank 12 × 12 grid"></td>
+</tr>
+<tr>
+<td align="center"><b>Edit</b> the layout you're on</td>
+<td align="center">Draw a <b>New</b> one from scratch</td>
+</tr>
+</table>
+
+Drawing a layout, naming it and using it:
+
+<img src="docs/new-layout.webp" alt="Four tiles drawn on the grid, the layout named Focus and saved, and the workspace's windows moving into it" width="100%">
 
 ## App homes
 
