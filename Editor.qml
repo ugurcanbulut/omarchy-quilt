@@ -25,8 +25,10 @@ PanelWindow {
   property string gapsOut: ""
   // App homes the workspace had when editing began ({ "2": "chromium" }),
   // and whether to keep each tile's app as its home.
-  property var startHomes: ({})
-  property bool rememberApps: false
+  // What Done does to the workspace's app homes: "keep" them as they are
+  // (they follow their tiles), "remember" each tile's app as its home, or
+  // "clear" them. A preset saved from here takes the same choice.
+  property string homesChoice: "keep"
   property var area: null
   property bool arrived: false
 
@@ -62,6 +64,13 @@ PanelWindow {
     && Layout.normalize(tilesInfo.spec) === spec
   readonly property var apps: engineCaughtUp ? tilesInfo.tiles.map(function(t) { return t.app || "" }) : []
   readonly property var homes: engineCaughtUp ? tilesInfo.tiles.map(function(t) { return t.home || "" }) : []
+
+  // The homes the workspace has now, by tile.
+  function homesNow() {
+    var out = {}
+    homes.forEach(function(app, i) { if (app) out[String(i + 1)] = app })
+    return out
+  }
 
   // What Remember apps keeps: each tile's app, or the home it already has.
   function appsToRemember() {
@@ -124,11 +133,7 @@ PanelWindow {
     returnKey = ""
     gapsIn = options.gapsIn !== undefined && options.gapsIn !== null ? String(options.gapsIn) : ""
     gapsOut = options.gapsOut !== undefined && options.gapsOut !== null ? String(options.gapsOut) : ""
-    var had = {}
-    if (tilesInfo && tilesInfo.workspace === key && tilesInfo.tiles)
-      tilesInfo.tiles.forEach(function(t) { if (t.home) had[String(t.index)] = t.home })
-    startHomes = had
-    rememberApps = Object.keys(had).length > 0
+    homesChoice = "keep"
     gw = layout.gw
     gh = layout.gh
     rects = layout.rects
@@ -151,8 +156,7 @@ PanelWindow {
     key = options.key
     gapsIn = ""
     gapsOut = ""
-    startHomes = {}
-    rememberApps = false
+    homesChoice = "keep"
     gw = 12
     gh = 12
     rects = []
@@ -173,11 +177,11 @@ PanelWindow {
     var back = mode === "new" && arrived ? returnKey : ""
     waitingSave = null
     saveWait.stop()
-    // Edit: the workspace keeps its apps' homes, or drops them. The engine
-    // reads each tile's app once the last change has gone through.
+    // Edit: the homes as chosen. The engine reads each tile's app once the
+    // last change has gone through.
     if (editing && keepHomes !== false) {
-      if (rememberApps) send(["homes", "remember"])
-      else if (Object.keys(startHomes).length) send(["homes", "{}"])
+      if (homesChoice === "remember") send(["homes", "remember"])
+      else if (homesChoice === "clear") send(["homes", "{}"])
       send(["editing", "done"])
     }
     mode = ""
@@ -192,7 +196,8 @@ PanelWindow {
   }
 
   // Save pressed before the engine shows the layout drawn here: the apps to
-  // keep with it come from the engine's picture, so wait for it (briefly).
+  // keep with the preset come from the engine's picture, so wait for it
+  // (briefly).
   property var waitingSave: null
   onEngineCaughtUpChanged: if (engineCaughtUp && waitingSave) save(waitingSave.use)
 
@@ -204,7 +209,7 @@ PanelWindow {
 
   function save(use, force) {
     if (!rects.length || !Layout.parse(spec)) return
-    if (editing && rememberApps && !engineCaughtUp && !force) {
+    if (editing && homesChoice !== "clear" && !engineCaughtUp && !force) {
       waitingSave = { use: use }
       saveWait.restart()
       return
@@ -212,7 +217,9 @@ PanelWindow {
     waitingSave = null
     saveWait.stop()
     var label = nameField.text.trim()
-    saveRequested(label, spec, editing && rememberApps && engineCaughtUp ? appsToRemember() : null, gapsIn, gapsOut)
+    var apps = !editing || !engineCaughtUp || homesChoice === "clear" ? null
+      : homesChoice === "remember" ? appsToRemember() : homesNow()
+    saveRequested(label, spec, apps, gapsIn, gapsOut)
     if (use && returnKey) {
       var target = returnKey
       finish()
@@ -791,17 +798,29 @@ PanelWindow {
             onClicked: editor.change([])
           }
 
-          // Each tile's app becomes its home: it opens there from now on.
-          Button {
-            height: controls.controlHeight
+          // App homes after the edit, for this workspace and a saved preset.
+          Row {
             visible: editor.editing
-            iconText: String.fromCodePoint(editor.rememberApps ? 0xF0132 : 0xF0131) // md-checkbox-marked / blank-outline
-            text: "Remember apps"
-            tooltipText: "Each app opens in its tile from now on, on this workspace and in a saved preset"
-            bordered: true
-            selected: editor.rememberApps
-            foreground: Color.popups.text
-            onClicked: editor.rememberApps = !editor.rememberApps
+            spacing: controls.spacing
+
+            Repeater {
+              model: [
+                { value: "keep", label: "Keep homes", tip: "App homes stay as they are; they follow their tiles" },
+                { value: "remember", label: "Remember apps", tip: "Each app opens in its tile from now on, on this workspace and in a saved preset" },
+                { value: "clear", label: "Clear homes", tip: "No app homes, on this workspace or in a saved preset" }
+              ]
+
+              Button {
+                required property var modelData
+                height: controls.controlHeight
+                text: modelData.label
+                tooltipText: modelData.tip
+                bordered: true
+                selected: editor.homesChoice === modelData.value
+                foreground: Color.popups.text
+                onClicked: editor.homesChoice = modelData.value
+              }
+            }
           }
 
           TextField {

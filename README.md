@@ -63,7 +63,7 @@ The popup has two tabs of layouts, and a gear tab for settings. **Built-in** hol
 
 The popup has two buttons for making layouts of your own:
 
-- **Edit** opens the current workspace's layout on screen, over your windows. Drag the lines between tiles to resize them, hover a tile to split it or remove it, drag a tile onto another to swap their windows, and drag across empty cells to add a tile. Every change applies as you make it. **Save as preset** keeps it in your presets, **Done** keeps it on this workspace only, and **Cancel** (or Esc) puts the old layout back. Windows you swapped stay where you put them.
+- **Edit** opens the current workspace's layout on screen, over your windows. Drag the lines between tiles to resize them, hover a tile to split it or remove it, drag a tile onto another to swap their windows, and drag across empty cells to add a tile. Every change applies as you make it. **Save as preset** keeps it in your presets, **Done** keeps it on this workspace only, and **Cancel** (or Esc) puts everything back as it was: the layout, its gaps and app homes, and where each window sat. Keep homes, Remember apps and Clear homes choose what happens to the [app homes](#app-homes).
 - **New** takes you to an empty workspace (99, or the next free one below it) and shows a blank 12 × 12 grid; switch to 10 × 10 if you like. Drag across the grid to draw tiles of any shape and size, and leave cells empty wherever you want a gap. **Save** adds it to your presets, **Save and use** also puts it on the workspace you came from, and either one takes you back there.
 
 Ctrl+Z undoes the last change. The toolbar can be dragged by its title if it covers a tile.
@@ -74,7 +74,7 @@ Ctrl+Z undoes the last change. The toolbar can be dragged by its title if it cov
 
 Give a tile an app and that app opens there, whatever else is on the workspace:
 
-- In the editor, turn on **Remember apps** before **Save as preset** or **Done**. Each tile keeps the app that's in it now.
+- In the editor, choose **Remember apps** before **Save as preset** or **Done**. Each tile keeps the app that's in it now. **Keep homes** (where the editor starts) leaves the homes as they are, and they follow their tiles as you reshape the layout; **Clear homes** removes them.
 - Or run `quilt home` on the focused window to make its tile that app's home (`quilt home 3` for tile 3; `quilt home 3 none` clears it).
 
 A new window goes to its app's home if it's free. If something else sits there, that window steps aside to a free tile (or shares the overflow tile when none is free). Other windows fill the free tiles first and use an empty home only when nothing else is left, so the tile is still free when its app opens. Switching to a preset with homes also moves the windows already on the workspace into them. Apps are matched by their window class, which the editor shows on each tile.
