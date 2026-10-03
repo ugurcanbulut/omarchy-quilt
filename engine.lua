@@ -10,10 +10,11 @@
 --            those heights on a 10- or 12-row grid ("4:8/4").
 --   drawn:   "@12x12:x,y,w,h;x,y,w,h;..." - rectangles on a W x H grid, as
 --            the visual editor draws them; parts of the grid can stay empty.
--- Tiles are numbered left to right, then top to bottom. Each window keeps
--- its tile; a closed window leaves an empty tile that the next window fills.
--- "smart" picks a column spec from the window count and the monitor's shape
--- instead, and never leaves tiles empty.
+-- Tiles are numbered by their top-left corner: left to right, then top to
+-- bottom among tiles that start in the same column. Each window keeps its
+-- tile; a closed window leaves an empty tile that the next window fills.
+-- "smart" instead picks a column spec from the window count and the
+-- monitor's shape, and fills its tiles in order.
 
 quilt = quilt or {}
 local Q = quilt

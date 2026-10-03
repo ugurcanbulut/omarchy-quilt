@@ -2,7 +2,7 @@
 
 // Layout math shared by the popup and the editor; engine.lua does the same
 // for Hyprland. A layout is a list of rectangles in grid units on a gw x gh
-// grid, numbered left to right, then top to bottom.
+// grid, numbered by their top-left corner: left to right, then top to bottom.
 
 var EPS = 1e-6
 
