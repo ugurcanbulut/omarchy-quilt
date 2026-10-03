@@ -719,7 +719,16 @@ PanelWindow {
           id: controls
           spacing: Style.space(6)
 
+          // Buttons with an icon come out taller than text-only ones and the
+          // name field; one height for all keeps the row even.
+          readonly property real controlHeight: {
+            var h = 0
+            for (var i = 0; i < children.length; i++) h = Math.max(h, children[i].implicitHeight)
+            return h
+          }
+
           Button {
+            height: controls.controlHeight
             visible: !editor.editing
             text: "12 × 12"
             tooltipText: "A 12 × 12 grid"
@@ -730,6 +739,7 @@ PanelWindow {
           }
 
           Button {
+            height: controls.controlHeight
             visible: !editor.editing
             text: "10 × 10"
             tooltipText: "A 10 × 10 grid"
@@ -740,6 +750,7 @@ PanelWindow {
           }
 
           Button {
+            height: controls.controlHeight
             iconText: String.fromCodePoint(0xF054C) // md-undo
             tooltipText: "Undo (Ctrl+Z)"
             bordered: true
@@ -750,6 +761,7 @@ PanelWindow {
           }
 
           Button {
+            height: controls.controlHeight
             visible: !editor.editing
             iconText: String.fromCodePoint(0xF01FE) // md-eraser
             tooltipText: "Clear"
@@ -762,6 +774,7 @@ PanelWindow {
 
           // Each tile's app becomes its home: it opens there from now on.
           Button {
+            height: controls.controlHeight
             visible: editor.editing
             iconText: String.fromCodePoint(editor.rememberApps ? 0xF0132 : 0xF0131) // md-checkbox-marked / blank-outline
             text: "Remember apps"
@@ -774,6 +787,8 @@ PanelWindow {
 
           TextField {
             id: nameField
+            height: controls.controlHeight
+            verticalAlignment: TextInput.AlignVCenter
             width: Style.space(190)
             placeholderText: "Preset name"
             foreground: Color.popups.text
@@ -781,6 +796,7 @@ PanelWindow {
           }
 
           Button {
+            height: controls.controlHeight
             text: "Cancel"
             tooltipText: editor.editing ? "Put the old layout back (Esc)" : "Close without saving (Esc)"
             bordered: true
@@ -789,6 +805,7 @@ PanelWindow {
           }
 
           Button {
+            height: controls.controlHeight
             iconText: String.fromCodePoint(0xF0193) // md-content-save
             text: editor.editing ? "Save as preset" : "Save"
             tooltipText: "Add it to your presets"
@@ -800,6 +817,7 @@ PanelWindow {
           }
 
           Button {
+            height: controls.controlHeight
             visible: !editor.editing
             text: "Save and use"
             tooltipText: "Add it to your presets and use it on the workspace you came from"
@@ -811,6 +829,7 @@ PanelWindow {
           }
 
           Button {
+            height: controls.controlHeight
             visible: editor.editing
             iconText: String.fromCodePoint(0xF012C) // md-check
             text: "Done"
