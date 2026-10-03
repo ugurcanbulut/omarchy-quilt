@@ -36,6 +36,7 @@ The popup has 25 built-in layouts in four groups (columns, main + stack, grids a
 ## Features
 
 - **Windows keep their tiles.** Close a window and its tile stays empty instead of the others shifting around. The next window you open fills it.
+- **Extra windows become tabs.** With more windows than tiles, the extras join the last tile as tabs (Hyprland's window groups) and move back out into their own tiles as soon as there's room, oldest first. A group you make yourself with Super+G takes one tile and keeps it while you switch tabs.
 - **Drop areas.** Empty tiles show an outline with a "+". Click one to open the app launcher; the app you pick opens in that tile.
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
 - **App homes and one-click launch.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right, and one click opens the apps that aren't there yet. See [App homes](#app-homes).
@@ -115,6 +116,7 @@ They live in a `presets` list on the Quilt entry in your bar layout in `~/.confi
 - A preset is a spec string, or an object with `spec` and optional `label`, `gapsIn` and `gapsOut` (in pixels), and `apps` (tile number to window class, see [App homes](#app-homes)).
 - `quilt use Dev` applies a preset by its label, which is handy for key bindings.
 - Add `"builtInPresets": false` to show only your own layouts plus the adaptive ones.
+- Add `"overflow": "stack"` to stack extra windows in the last tile instead of making them tabs.
 
 ### Your own Smart and monitor defaults
 
