@@ -102,7 +102,8 @@ config_lua() {
       else "nil" end;
     [.presets[]? | if type == "string" then { spec: . } else . end | select(.spec | type == "string")] as $presets
     | def preset($name): first($presets[] | select((.label // "" | ascii_downcase) == ($name | ascii_downcase))) // { spec: $name };
-    { smart: (.smart // {} | if type == "object" then . else {} end),
+    { overflow: (if .overflow == "stack" then "stack" else "tabs" end),
+      smart: (.smart // {} | if type == "object" then . else {} end),
       monitors: (.monitors // {} | if type == "object" then . else {} end | with_entries(.value |= (
         (if type == "string" then preset(.) elif type == "object" then . else {} end)
         | { spec: ((.spec // "") | gsub(" "; "")), gaps_in: .gapsIn, gaps_out: .gapsOut, homes: (.apps // {}) }))) }

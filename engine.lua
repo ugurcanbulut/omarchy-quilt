@@ -44,7 +44,7 @@ local LAYOUTS = { dwindle = true, scrolling = true, master = true, monocle = tru
 
 -- Settings from shell.json, handed over by the script (Lua can't read JSON):
 -- your own Smart layouts per monitor shape, and default layouts per monitor.
-Q.config = Q.config or { smart = {}, monitors = {} }
+Q.config = Q.config or { smart = {}, monitors = {}, overflow = "tabs" }
 
 ---------------------------------------------------------------- serialization
 
@@ -126,7 +126,7 @@ local function load_state()
   -- from the last one mean nothing.
   local session = os.getenv("HYPRLAND_INSTANCE_SIGNATURE") or ""
   if Q.state.session ~= session then
-    for _, s in pairs(Q.state.workspaces) do s.assign, s.order, s.pending = {}, {}, nil end
+    for _, s in pairs(Q.state.workspaces) do s.assign, s.order, s.pending, s.tabbed, s.made_group = {}, {}, nil, nil, nil end
     Q.state.session = session
   end
 end
@@ -357,6 +357,145 @@ end
 
 local function app_of(window) return window and (window.class or ""):lower() or "" end
 
+------------------------------------------------------------------------- tabs
+
+-- Hyprland hands a group of windows to the layout as one window: its first
+-- member, whichever tab shows. The other members have no tile of their own.
+local function group_members(w)
+  if not w then return nil, nil end
+  local ok, g = pcall(function() return w.group end)
+  if not ok or not g then return nil, nil end
+  local okm, members = pcall(function() return g.members end)
+  return g, okm and type(members) == "table" and members or {}
+end
+
+-- Tabs leave in the order they came: each gets the next number.
+local function next_tab(s)
+  local n = 0
+  for _, k in pairs(s.tabbed) do if k > n then n = k end end
+  return n + 1
+end
+
+local function window_by_id(key, id)
+  local ok, windows = pcall(hl.get_workspace_windows, key)
+  for _, w in ipairs(ok and windows or {}) do
+    if tostring(w.stable_id) == id then return w end
+  end
+end
+
+-- Tile tabs: windows beyond the layout's tiles join the last tile's window as
+-- tabs instead of squeezing in beside it, and leave again (in the order they
+-- came) when a tile frees up. Only windows Quilt tabbed (s.tabbed) and groups
+-- it made (s.made_group) are ever taken apart; your own groups are left alone.
+local function tidy_tabs(key, overflow_ids, last_owner, free)
+  local s = Q.state.workspaces[key]
+  if not s or not Q.parse(s.spec or "") or s.spec == "smart" then return end
+  s.tabbed, s.made_group = s.tabbed or {}, s.made_group or {}
+
+  -- Out of their tabs first, one per free tile.
+  if free > 0 then
+    local waiting = {}
+    for id, n in pairs(s.tabbed) do waiting[#waiting + 1] = { id = id, n = n } end
+    table.sort(waiting, function(a, b) return a.n < b.n end)
+    for _, item in ipairs(waiting) do
+      if free == 0 then break end
+      local w = window_by_id(key, item.id)
+      local g, members = group_members(w)
+      if g then
+        -- If this tab holds the group's tile, another member takes it over.
+        local tile = s.assign[item.id]
+        if tile then
+          for _, m in ipairs(members) do
+            local other = tostring(m.stable_id)
+            if other ~= item.id then s.assign[other], s.assign[item.id] = tile, nil break end
+          end
+        end
+        if pcall(function() g:remove(w) end) then free = free - 1 end
+      end
+      s.tabbed[item.id] = nil
+    end
+  end
+
+  -- Then extra windows into the last tile's group.
+  local owner = last_owner and window_by_id(key, last_owner)
+  -- An extra that is a whole group (after the layout shrank): the tile's
+  -- own window joins that group instead, as its newest tab.
+  if owner and not group_members(owner) then
+    for _, id in ipairs(overflow_ids) do
+      local g = group_members(window_by_id(key, id))
+      if g and pcall(function() g:add(owner) end) then
+        s.tabbed[last_owner] = next_tab(s)
+        overflow_ids, owner = {}, nil
+        break
+      end
+    end
+  end
+  if owner and #overflow_ids > 0 then
+    local g = group_members(owner)
+    if not g then
+      hl.dispatch(hl.dsp.group.toggle({ window = "address:" .. owner.address }))
+      owner = window_by_id(key, last_owner)
+      g = group_members(owner)
+      if g then s.made_group[last_owner] = true end
+    end
+    for _, id in ipairs(overflow_ids) do
+      local w = window_by_id(key, id)
+      -- Already a tab (a pass can come again before the group shows).
+      if w and group_members(w) then w = nil end
+      if g and w and pcall(function() g:add(w) end) then s.tabbed[id] = next_tab(s) end
+    end
+  end
+
+  -- A group Quilt made or tabbed into, down to one window, needs no tab
+  -- bar. Its last window can be any of them: the one it started from may be
+  -- gone.
+  local ok, windows = pcall(hl.get_workspace_windows, key)
+  for _, w in ipairs(ok and windows or {}) do
+    local id = tostring(w.stable_id)
+    if s.made_group[id] or s.tabbed[id] then
+      local g, members = group_members(w)
+      if g and #members <= 1 then hl.dispatch(hl.dsp.group.toggle({ window = "address:" .. w.address })) end
+      if not g or #members <= 1 then s.made_group[id], s.tabbed[id] = nil, nil end
+    end
+  end
+  for id in pairs(s.made_group) do
+    if not window_by_id(key, id) then s.made_group[id] = nil end
+  end
+  for id in pairs(s.tabbed) do
+    if not window_by_id(key, id) then s.tabbed[id] = nil end
+  end
+  Q.save()
+end
+
+-- Group changes during a layout pass would start another one, so they wait
+-- for the pass to end.
+local function schedule_tabs(key, overflow_ids, last_owner, free)
+  Q.busy = Q.busy or {}
+  if Q.busy[key] then return end
+  Q.busy[key] = true
+  hl.timer(function()
+    Q.busy[key] = nil
+    local ok, err = pcall(tidy_tabs, key, overflow_ids, last_owner, free)
+    if not ok then Q.last_error = tostring(err) end
+  end, { timeout = 30, type = "oneshot" })
+end
+
+-- Let go of every tab Quilt made on a workspace (leaving Quilt's grids).
+local function release_tabs(key, s)
+  if not s or not (s.tabbed or s.made_group) then return end
+  for id in pairs(s.tabbed or {}) do
+    local w = window_by_id(key, id)
+    local g = group_members(w)
+    if g then pcall(function() g:remove(w) end) end
+  end
+  for head in pairs(s.made_group or {}) do
+    local w = window_by_id(key, head)
+    local g, members = group_members(w)
+    if g and #members <= 1 then hl.dispatch(hl.dsp.group.toggle({ window = "address:" .. w.address })) end
+  end
+  s.tabbed, s.made_group = nil, nil
+end
+
 local function recalculate(ctx)
   local first = ctx.targets[1] and ctx.targets[1].window
   local key = first and ws_key(first.workspace)
@@ -379,6 +518,35 @@ local function recalculate(ctx)
   end
   local alive = tiled_ids(key)
   for id in pairs(present) do alive[id] = true end
+  -- A group reaches the layout as whichever tab showed last. Its tile is the
+  -- one the member handed over last pass had (a newer member may still hold
+  -- its own old tile); the members behind it have no tile of their own (one
+  -- kept would stay empty for good).
+  local inside, group_size, before = {}, {}, {}
+  for _, id in ipairs((Q.seen or {})[key] or {}) do before[id] = true end
+  for _, t in ipairs(ctx.targets) do
+    local _, members = group_members(t.window)
+    if members then
+      local here = tostring(t.window.stable_id)
+      local tile
+      for _, m in ipairs(members) do
+        local id = tostring(m.stable_id)
+        group_size[id] = #members
+        if id ~= here and before[id] and s.assign[id] then tile = s.assign[id] end
+      end
+      if not tile and not s.assign[here] then
+        for _, m in ipairs(members) do
+          local id = tostring(m.stable_id)
+          if id ~= here and s.assign[id] then tile = s.assign[id] break end
+        end
+      end
+      if tile and s.assign[here] ~= tile then s.assign[here], Q.dirty = tile, true end
+      for _, m in ipairs(members) do
+        local id = tostring(m.stable_id)
+        if id ~= here then s.assign[id], inside[id], alive[id] = nil, true, nil end
+      end
+    end
+  end
 
   Q.seen = Q.seen or {}
   local x, y = traded(Q.seen[key], ids)
@@ -475,11 +643,28 @@ local function recalculate(ctx)
         table.insert(placed[tile], targets[id])
       end
     end
-    -- More windows than tiles: the extras share the last tile to fill.
+    -- More windows than tiles: the extras share the last tile to fill, and
+    -- right after this pass become tabs there (unless overflow is "stack").
     local last = fill[#fill]
     for _, t in ipairs(overflow) do
       placed[last] = placed[last] or {}
       table.insert(placed[last], t)
+    end
+    if Q.config.overflow ~= "stack" then
+      local free = 0
+      for i = 1, #tiles do if not used[i] then free = free + 1 end end
+      local lonely = false
+      for head in pairs(s.made_group or {}) do
+        if (group_size[head] or 0) <= 1 then lonely = true end
+      end
+      for id in pairs(s.tabbed or {}) do
+        if group_size[id] == 1 then lonely = true end
+      end
+      if #overflow > 0 or (free > 0 and next(s.tabbed or {})) or lonely then
+        local ids = {}
+        for _, t in ipairs(overflow) do ids[#ids + 1] = tostring(t.window.stable_id) end
+        schedule_tabs(key, ids, owner[last], free)
+      end
     end
   end
 
@@ -492,7 +677,9 @@ local function recalculate(ctx)
     filled[i] = list[1].window and list[1].window.class or "?"
   end
 
-  write_tiles(key, s, smart and spec or s.spec, ctx.area, tiles, filled, #ctx.targets)
+  local behind = 0
+  for _ in pairs(inside) do behind = behind + 1 end
+  write_tiles(key, s, smart and spec or s.spec, ctx.area, tiles, filled, #ctx.targets + behind)
   if Q.dirty then Q.dirty = false Q.save() end
 end
 
@@ -580,6 +767,8 @@ end
 local function forget(s, id)
   local had = s.assign[id] ~= nil
   s.assign[id] = nil
+  if s.tabbed then s.tabbed[id] = nil end
+  if s.made_group then s.made_group[id] = nil end
   for i, o in ipairs(s.order) do
     if o == id then
       table.remove(s.order, i)
@@ -693,6 +882,7 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
   local s = ws_state(key)
   s.from_default, s.off = nil, nil
   if spec == "off" then
+    release_tabs(key, s)
     -- Remembered as your choice, so a monitor default doesn't bring Quilt
     -- back here.
     Q.state.workspaces[key] = { off = true }
@@ -705,6 +895,7 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
   end
   local new = Q.parse(spec)
   if not (spec == "smart" or LAYOUTS[spec] or new) then return "bad spec" end
+  if not new or spec == "smart" then release_tabs(key, s) end
   local old = Q.parse(s.spec or "")
   if homes == "keep" then s.homes = remap_homes(s.homes, old, new) else s.homes = clean_homes(homes, new) end
   remap(s, old, new)
@@ -978,7 +1169,7 @@ function Q.configure(config)
       monitors[name] = { spec = spec, gaps_in = tonumber(d.gaps_in), gaps_out = tonumber(d.gaps_out), homes = clean_homes(d.homes, Q.parse(spec)) }
     end
   end
-  Q.config = { smart = smart, monitors = monitors }
+  Q.config = { smart = smart, monitors = monitors, overflow = config.overflow == "stack" and "stack" or "tabs" }
   local ok, list = pcall(hl.get_workspaces)
   for _, ws in ipairs(ok and list or {}) do follow_default(ws_key(ws), ws) end
   -- Smart workspaces pick up your layouts.
@@ -991,6 +1182,7 @@ end
 ------------------------------------------------------------------------- load
 
 function Q.load()
+  Q.last_error = nil
   os.execute("mkdir -p '" .. Q.state_dir .. "' '" .. Q.runtime_dir .. "'")
   load_state()
   -- Hyprland keeps the first layout registered under a name until the next
