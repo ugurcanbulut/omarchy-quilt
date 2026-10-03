@@ -392,45 +392,54 @@ PanelWindow {
             Behavior on color { ColorAnimation { duration: 100 } }
           }
 
-          Column {
+          // A dark backdrop keeps the labels readable over busy windows.
+          Rectangle {
+            readonly property real room: parent.width - Style.space(24)
             anchors.centerIn: parent
-            width: parent.width - Style.space(16)
-            spacing: Style.space(2)
+            width: Math.min(room, labels.implicitWidth + Style.space(32))
+            height: labels.implicitHeight + Style.space(16)
+            radius: Style.cornerRadius
+            color: Qt.rgba(0, 0, 0, 0.6)
 
-            Text {
-              width: parent.width
-              horizontalAlignment: Text.AlignHCenter
-              textFormat: Text.PlainText
-              text: String(tile.index + 1)
-              color: editor.ink
-              opacity: 0.85
-              font.family: Style.font.family
-              font.pixelSize: Math.min(Style.space(56), tile.height * 0.3)
-              font.bold: true
-            }
+            Column {
+              id: labels
+              anchors.centerIn: parent
+              spacing: Style.space(2)
 
-            Text {
-              width: parent.width
-              horizontalAlignment: Text.AlignHCenter
-              elide: Text.ElideRight
-              textFormat: Text.PlainText
-              text: editor.editing ? (tile.app || "empty") : ""
-              visible: editor.editing && editor.apps.length > 0
-              color: editor.ink
-              opacity: 0.7
-              font.family: Style.font.family
-              font.pixelSize: Style.font.heading
-            }
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                textFormat: Text.PlainText
+                text: String(tile.index + 1)
+                color: editor.ink
+                opacity: 0.9
+                font.family: Style.font.family
+                font.pixelSize: Math.min(Style.space(56), tile.height * 0.3)
+                font.bold: true
+              }
 
-            Text {
-              width: parent.width
-              horizontalAlignment: Text.AlignHCenter
-              textFormat: Text.PlainText
-              text: Math.round(tile.modelData.w * 100 / editor.gw) + "% × " + Math.round(tile.modelData.h * 100 / editor.gh) + "%"
-              color: editor.ink
-              opacity: 0.5
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: Math.min(implicitWidth, tile.width - Style.space(56))
+                horizontalAlignment: Text.AlignHCenter
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                text: tile.app || "empty"
+                visible: editor.editing && editor.apps.length > 0
+                color: editor.ink
+                opacity: 0.8
+                font.family: Style.font.family
+                font.pixelSize: Style.font.heading
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                textFormat: Text.PlainText
+                text: Math.round(tile.modelData.w * 100 / editor.gw) + "% × " + Math.round(tile.modelData.h * 100 / editor.gh) + "%"
+                color: editor.ink
+                opacity: 0.6
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
             }
           }
 
