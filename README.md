@@ -27,7 +27,7 @@ Add `:n` to split a column into `n` stacked tiles of the same height, or list th
 | `12:3` | Three rows, for vertical monitors |
 | `4:8/4|8` | On the left, a tall tile over a short one; a wide column on the right |
 
-Anything that isn't columns can be drawn as rectangles on a grid: `@12x12:` followed by `x,y,width,height` for each tile, in grid cells. `@12x12:0,0,12,4;0,4,6,8;6,4,6,8` is a banner across the top with two tiles under it. Cells no tile covers stay empty. You rarely need to type these: the editor writes them for you.
+Anything that isn't columns can be drawn as rectangles on a grid: `@12x12:` followed by `x,y,width,height` for each tile, in grid cells. `@12x12:0,0,12,4;0,4,6,8;6,4,6,8` is a banner across the top with two tiles under it. Cells no tile covers stay empty, and tiles can't overlap. You rarely need to type these: the editor writes them for you.
 
 Tiles are numbered by their top-left corner: left to right, and top to bottom among tiles that start in the same column. In `6:2|6:2`, tiles 1 and 2 are the left column.
 
@@ -47,16 +47,18 @@ The popup has 25 built-in layouts in four groups (columns, main + stack, grids a
   | 3 | `6|6:2` | `3|6|3` | `12:3` |
   | 4 | `6:2|6:2` | `3|6|3:2` | `6:2|6:2` |
 
+  Past six windows it switches to an even grid.
+
 - **Live control.** Scroll on the bar icon to widen or narrow the focused window's column by one grid column (a centered column grows on both sides). Right-click the icon for the next layout. In the popup, **Mirror** flips the layout and **To main** swaps the focused window into the biggest tile.
 - **Per workspace, remembered.** Each workspace keeps its own layout across Hyprland reloads and reboots. The bar icon draws the current workspace's layout.
-- **Hyprland's own layouts too.** Dwindle (Omarchy's default), scrolling and monocle are one click away, and **Off** hands the workspace back to Omarchy's default.
+- **Hyprland's own layouts too.** Dwindle (Omarchy's default), scrolling and monocle are one click away, and **Off** hands the workspace back to Omarchy: its default layout, or the one you picked for that workspace with Super+L.
 - **Nothing written to your Hyprland config.** Quilt registers its layout while Hyprland runs and registers it again after every config reload. Removing the plugin leaves no trace in your config.
 
 ## The editor
 
 The popup has two buttons for making layouts of your own:
 
-- **Edit** opens the current workspace's layout on screen, over your windows. Drag the lines between tiles to resize them, hover a tile to split it or remove it, drag a tile onto another to swap their windows, and drag across empty cells to add a tile. Every change applies as you make it. **Save as preset** keeps it in your presets, **Done** keeps it on this workspace only, and **Cancel** (or Esc) puts the old layout back.
+- **Edit** opens the current workspace's layout on screen, over your windows. Drag the lines between tiles to resize them, hover a tile to split it or remove it, drag a tile onto another to swap their windows, and drag across empty cells to add a tile. Every change applies as you make it. **Save as preset** keeps it in your presets, **Done** keeps it on this workspace only, and **Cancel** (or Esc) puts the old layout back. Windows you swapped stay where you put them.
 - **New** takes you to an empty workspace (99, or the next free one below it) and shows a blank 12 × 12 grid; switch to 10 × 10 if you like. Drag across the grid to draw tiles of any shape and size, and leave cells empty wherever you want a gap. **Save** adds it to your presets, **Save and use** also puts it on the workspace you came from, and either one takes you back there.
 
 Ctrl+Z undoes the last change. The toolbar can be dragged by its title if it covers a tile.
