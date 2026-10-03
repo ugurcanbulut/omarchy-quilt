@@ -173,7 +173,8 @@ function columnsSpec(gw, gh, sorted) {
     if (!near(y, gh)) return null
     var span = Math.round(first.w)
     if (heights.length === 1) parts.push(String(span))
-    else if (heights.every(function(h) { return near(h, heights[0]) })) parts.push(span + ":" + heights.length)
+    // ":n" goes up to 8 tiles; more than that need heights or a drawn spec.
+    else if (heights.length <= 8 && heights.every(function(h) { return near(h, heights[0]) })) parts.push(span + ":" + heights.length)
     else if ((gh === 10 || gh === 12) && heights.every(function(h) { return near(h, Math.round(h)) }))
       parts.push(span + ":" + heights.map(Math.round).join("/"))
     else return null
@@ -217,8 +218,17 @@ function pixelAxis(edges, size, gap) {
   var exact = [], px = [], used = 0, k
   for (k = 0; k < n; k++) {
     exact.push((edges[k + 1] - edges[k]) * room)
-    px.push(Math.floor(exact[k] + EPS))
+    px.push(Math.max(1, Math.floor(exact[k] + EPS)))
     used += px[k]
+  }
+  // Every segment keeps a pixel, or a thin tile vanishes; the pixels that
+  // takes come out of the biggest segments.
+  while (used > room) {
+    var big = 0
+    for (k = 1; k < n; k++) if (px[k] > px[big]) big = k
+    if (px[big] <= 1) break
+    px[big]--
+    used--
   }
   var order = px.map(function(_, k) { return k })
   order.sort(function(a, b) {
