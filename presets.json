@@ -10,6 +10,7 @@
         { "spec": "3|6|3", "label": "Centered" },
         { "spec": "2|8|2", "label": "Wide center" },
         { "spec": "3|3|3|3", "label": "Quarters" },
+        { "spec": "2|2|2|2|2", "label": "Fifths" },
         { "spec": "4|6", "label": "40 · 60" },
         { "spec": "6|4", "label": "60 · 40" },
         { "spec": "3|4|3", "label": "30 · 40 · 30" },
@@ -22,8 +23,11 @@
         { "spec": "8|4:2", "label": "Main, stack on the right" },
         { "spec": "4:2|8", "label": "Main, stack on the left" },
         { "spec": "6|6:2", "label": "Half, stack" },
+        { "spec": "6:2|6", "label": "Stack, half" },
         { "spec": "3|6|3:2", "label": "Centered main, stack on the right" },
-        { "spec": "3:2|6|3:2", "label": "Centered main, stacks on both sides" }
+        { "spec": "3:2|6|3", "label": "Centered main, stack on the left" },
+        { "spec": "3:2|6|3:2", "label": "Centered main, stacks on both sides" },
+        { "spec": "8|4:3", "label": "Main, three stacked on the right" }
       ]
     },
     {
@@ -31,7 +35,6 @@
       "presets": [
         { "spec": "6:2|6:2", "label": "2 × 2 grid" },
         { "spec": "4:2|4:2|4:2", "label": "3 × 2 grid" },
-        { "spec": "3:2|3:2|3:2|3:2", "label": "4 × 2 grid" },
         { "spec": "12:2", "label": "Two rows" },
         { "spec": "12:3", "label": "Three rows" }
       ]

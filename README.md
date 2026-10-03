@@ -31,7 +31,7 @@ Anything that isn't columns can be drawn as rectangles on a grid: `@12x12:` foll
 
 Tiles are numbered by their top-left corner: left to right, and top to bottom among tiles that start in the same column. In `6:2|6:2`, tiles 1 and 2 are the left column.
 
-The popup has two tabs. **Built-in** holds 25 layouts in four groups (columns, main + stack, grids and rows, adaptive), each shown as a small picture of your current number of windows; **Yours** holds the ones you make. The popup opens on the tab with the current layout. Hover a layout to read what it does.
+The popup has two tabs of layouts, and a gear tab for settings. **Built-in** holds 28 layouts in four groups (columns, main + stack, grids and rows, adaptive), each shown as a small picture of your current number of windows; **Yours** holds the ones you make. The popup opens on the tab with the current layout. Hover a layout to read what it does.
 
 ## Features
 
