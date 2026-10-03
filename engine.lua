@@ -605,6 +605,21 @@ end
 
 -- Group changes during a layout pass would start another one, so they wait
 -- for the pass to end.
+-- Focus a window once the layout pass is over, if its workspace is on
+-- screen.
+local function focus_after_pass(key, id)
+  hl.timer(function()
+    pcall(function()
+      local w = window_by_id(key, id)
+      local ok, ws = pcall(hl.get_workspace, key)
+      local monitor = ok and ws and ws.monitor
+      if w and monitor and monitor.active_workspace and ws_key(monitor.active_workspace) == key then
+        hl.dispatch(hl.dsp.focus({ window = "address:" .. w.address }))
+      end
+    end)
+  end, { timeout = 1, type = "oneshot" })
+end
+
 local function schedule_tabs(key, overflow_ids, last_owner)
   Q.busy = Q.busy or {}
   if Q.busy[key] then return end
@@ -834,6 +849,9 @@ local function recalculate(ctx)
         if not want then
           for _, i in ipairs(fill) do if not used[i] then want = i break end end
         end
+        -- Hyprland opens a window without focus while a layer has the
+        -- keyboard, as the picked tile's does: it gets focus here instead.
+        if s.pending_nav and want and want == s.pending then focus_after_pass(key, id) end
         s.pending, s.pending_at, s.pending_nav = nil, nil, nil
         if want then
           assign[id], used[want], owner[want], Q.dirty = want, true, id, true
