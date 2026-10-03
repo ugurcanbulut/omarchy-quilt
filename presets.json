@@ -39,10 +39,10 @@
     {
       "title": "ADAPTIVE",
       "presets": [
-        { "spec": "smart", "label": "Smart: changes with the number of windows" },
-        { "spec": "dwindle", "label": "Dwindle (Omarchy's default)" },
-        { "spec": "scrolling", "label": "Scrolling" },
-        { "spec": "monocle", "label": "Monocle: one window at a time" }
+        { "spec": "smart", "label": "Smart: changes with the number of windows", "description": "Smart picks the layout from how many windows are open and the monitor's shape: one window gets the screen (the middle of an ultrawide), and each new window reshapes the layout so they all fit." },
+        { "spec": "dwindle", "label": "Dwindle (Omarchy's default)", "description": "Dwindle, Omarchy's default: each new window splits the focused one in half." },
+        { "spec": "scrolling", "label": "Scrolling", "description": "Scrolling: windows sit side by side on a strip that can be wider than the screen. Moving focus scrolls to them." },
+        { "spec": "monocle", "label": "Monocle: one window at a time", "description": "Monocle: every window fills the screen, one in front of the others. Moving focus brings the next one to the front." }
       ]
     }
   ]

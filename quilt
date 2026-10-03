@@ -2,19 +2,25 @@
 
 # Quilt: tile layout presets for Hyprland, driven from the Omarchy bar.
 #
-#   quilt set <spec>         use a preset on the active workspace: 4|8, 3|6|3:2,
-#                            smart, dwindle, scrolling, monocle, or off
+#   quilt set <spec>         use a layout on the active workspace: 4|8, 3|6|3:2,
+#                            4:8/4, @12x12:0,0,6,12;6,0,6,12, smart, dwindle,
+#                            scrolling, monocle, or off
 #   quilt next | prev        cycle through the presets
 #   quilt grow | shrink      widen or narrow the focused window's column
 #   quilt mirror             flip the layout left to right
 #   quilt main               swap the focused window into the main tile
 #   quilt move <n|empty>     move the focused window to tile n, or the first empty one
+#   quilt swap <a> <b>       swap the windows in tiles a and b
 #   quilt target <n> [ws]    open the app launcher; the new app goes to tile n
-#   quilt status             print the active workspace's preset as JSON
+#   quilt edit               edit the active workspace's layout on screen
+#   quilt new                draw a new layout on an empty workspace
+#   quilt status             print the active workspace's layout as JSON
+#   quilt area               print the active workspace's tile area as JSON
 #   quilt load               load the layout engine (the bar does this itself)
 #
 # A spec lists column widths on a 10- or 12-column grid; ":n" splits a column
-# into n stacked tiles. QUILT_WORKSPACE overrides the workspace to act on.
+# into n equal stacked tiles, ":8/4" into tiles of those heights. "@WxH:" lists
+# drawn rectangles as x,y,w,h. QUILT_WORKSPACE overrides the workspace.
 
 set -uo pipefail
 
@@ -23,7 +29,7 @@ ID=ugurcanbulut.quilt
 SHELL_CONFIG="$HOME/.config/omarchy/shell.json"
 
 usage() {
-  sed -n '5,15p' "$0" | sed 's/^# \{0,1\}//' >&2
+  awk 'NR >= 5 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0" >&2
   exit 1
 }
 
@@ -114,7 +120,8 @@ current_spec() {
 set_spec() {
   local spec=$1 gaps_in=${2:-} gaps_out=${3:-}
   spec=${spec// /}
-  [[ $spec =~ ^(smart|dwindle|scrolling|monocle|off|[0-9]+(:[0-9]+)?(\|[0-9]+(:[0-9]+)?)*)$ ]] || {
+  local column='[0-9]+(:[0-9]+(/[0-9]+)*)?' rect='[0-9]+,[0-9]+,[0-9]+,[0-9]+'
+  [[ $spec =~ ^(smart|dwindle|scrolling|monocle|off|$column(\|$column)*|@[0-9]+x[0-9]+:$rect(\;$rect)*)$ ]] || {
     notify "\"$1\" isn't a preset Quilt understands"
     exit 1
   }
@@ -170,6 +177,16 @@ target)
     hyprctl dispatch "hl.dsp.focus({ workspace = $(lua_string "$3") })" >/dev/null
   fi
   call target "$(lua_string "$(workspace_key)")" "$2" && omarchy-menu summon apps
+  ;;
+swap)
+  [[ ${2:-} =~ ^[0-9]+$ && ${3:-} =~ ^[0-9]+$ ]] || usage
+  call swap "$(lua_string "$(workspace_key)")" "$2" "$3"
+  ;;
+edit) omarchy-shell "$ID" edit ;;
+new) omarchy-shell "$ID" create ;;
+area)
+  ensure_loaded
+  lua "return quilt.area($(lua_string "$(workspace_key)"))"
   ;;
 status)
   ensure_loaded

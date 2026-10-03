@@ -6,15 +6,17 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
+import "Layout.js" as Layout
 
 // Bar button + popup for Quilt's tile layouts, plus the drop areas drawn on
-// empty tiles. The layout itself runs inside Hyprland (engine.lua); the
-// sibling `quilt` script loads it and passes commands to it, and the engine
-// reports back through files in $XDG_RUNTIME_DIR/quilt.
+// empty tiles and the layout editor. The layout itself runs inside Hyprland
+// (engine.lua); the sibling `quilt` script loads it and passes commands to
+// it, and the engine reports back through files in $XDG_RUNTIME_DIR/quilt.
 Panel {
   id: root
   moduleName: "ugurcanbulut.quilt"
   ipcTarget: "ugurcanbulut.quilt"
+  manageIpc: false
 
   readonly property string pluginDir: decodeURIComponent(Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "")).replace(/\/$/, "")
   readonly property string script: pluginDir + "/quilt"
@@ -35,6 +37,8 @@ Panel {
   })
 
   property int cursorIndex: -1
+  // A preset of yours that one more right-click removes.
+  property int pendingDelete: -1
 
   // The focused workspace, named the way the engine names it.
   readonly property var focusedWorkspace: Hyprland.focusedWorkspace
@@ -45,6 +49,9 @@ Panel {
   readonly property int activeWindows: activeTiles && activeTiles.workspace === activeKey
     ? activeTiles.windows
     : (focusedWorkspace && focusedWorkspace.lastIpcObject ? focusedWorkspace.lastIpcObject.windows || 0 : 0)
+  // The layout on screen: for Smart, the one it picked.
+  readonly property string shownSpec: activeTiles && activeTiles.workspace === activeKey ? activeTiles.spec : activeSpec
+  readonly property bool canEdit: activeEntry !== null && Layout.editable(shownSpec) !== null
 
   // Presets in popup order, flattened for the keyboard cursor.
   readonly property var flatPresets: {
@@ -52,9 +59,25 @@ Panel {
     sections.forEach(function(section) { section.presets.forEach(function(p) { all.push(p) }) })
     return all
   }
-  readonly property int mirrorIndex: flatPresets.length
-  readonly property int mainIndex: flatPresets.length + 1
-  readonly property int offIndex: flatPresets.length + 2
+  readonly property int editIndex: flatPresets.length
+  readonly property int newIndex: flatPresets.length + 1
+  readonly property int mirrorIndex: flatPresets.length + 2
+  readonly property int mainIndex: flatPresets.length + 3
+  readonly property int offIndex: flatPresets.length + 4
+
+  // The line under the buttons describes whatever the cursor is on.
+  readonly property string hint: {
+    var i = cursorIndex
+    if (i >= 0 && i < flatPresets.length) return describe(flatPresets[i])
+    if (i === editIndex) return canEdit
+      ? "Edit this workspace's layout on screen: drag lines to resize, split, remove or swap tiles, then save it as a preset."
+      : "Pick a grid layout for this workspace first, then edit it on screen."
+    if (i === newIndex) return "Draw a new layout on an empty workspace, with any tiles you like, and save it as a preset."
+    if (i === mirrorIndex) return "Flip the layout left to right. Windows go with their tiles."
+    if (i === mainIndex) return "Swap the focused window into the biggest tile."
+    if (i === offIndex) return "Back to Omarchy's default layout on this workspace."
+    return "Scroll on the bar icon to widen or narrow the focused window's column. Right-click it for the next preset."
+  }
 
   function keyFor(ws) {
     if (!ws) return ""
@@ -70,42 +93,6 @@ Panel {
   function run(args) { Quickshell.execDetached([root.script].concat(args)) }
 
   function load() { if (!loadProc.running) loadProc.running = true }
-
-  // "4|8", "8|4:2" -> columns on a 10- or 12-column grid, or null.
-  function parseSpec(spec) {
-    if (typeof spec !== "string" || !spec.length) return null
-    var cols = [], total = 0
-    var parts = spec.split("|")
-    for (var i = 0; i < parts.length; i++) {
-      var m = parts[i].trim().match(/^(\d+)\s*(?::\s*(\d+))?$/)
-      if (!m) return null
-      var span = parseInt(m[1]), rows = m[2] ? parseInt(m[2]) : 1
-      if (span < 1 || rows < 1 || rows > 8) return null
-      cols.push({ span: span, rows: rows })
-      total += span
-    }
-    return (total === 10 || total === 12) ? { cols: cols, total: total } : null
-  }
-
-  // Tiles of a spec in a unit square, each with its place in the fill order
-  // (biggest first), as the engine fills them.
-  function tilesFor(spec) {
-    var layout = parseSpec(spec)
-    if (!layout) return []
-    var tiles = [], x = 0
-    layout.cols.forEach(function(col) {
-      var w = col.span / layout.total
-      for (var r = 0; r < col.rows; r++) tiles.push({ x: x, y: r / col.rows, w: w, h: 1 / col.rows })
-      x += w
-    })
-    var order = tiles.map(function(t, i) { return i })
-    order.sort(function(a, b) {
-      var sa = tiles[a].w * tiles[a].h, sb = tiles[b].w * tiles[b].h
-      return Math.abs(sa - sb) > 1e-6 ? sb - sa : a - b
-    })
-    order.forEach(function(tileIndex, rank) { tiles[tileIndex].rank = rank })
-    return tiles
-  }
 
   function monitorShape() {
     var m = Hyprland.focusedMonitor
@@ -127,7 +114,81 @@ Panel {
     return spec
   }
 
-  function isCurrent(preset) { return preset.spec.replace(/\s/g, "") === activeSpec }
+  function isCurrent(preset) { return Layout.normalize(preset.spec) === Layout.normalize(activeSpec) }
+
+  function describe(preset) {
+    if (preset.description) return preset.description
+    var layout = Layout.parse(preset.spec)
+    var count = layout ? layout.rects.length : 0
+    var text = (preset.label && preset.label !== preset.spec ? preset.label + " · " : "") + preset.spec
+      + (count ? " · " + count + (count === 1 ? " tile" : " tiles") : "")
+    if (preset.custom) text += pendingDelete === preset.customIndex ? ". Right-click again to remove it." : ". Right-click to remove it."
+    return text
+  }
+
+  function saveSettings(changes) {
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, Object.assign({}, root.settings || {}, changes))
+  }
+
+  function customPresets() {
+    var list = setting("presets", [])
+    return Array.isArray(list) ? list.slice() : []
+  }
+
+  function savePreset(label, spec) {
+    var list = customPresets()
+    var exists = list.some(function(entry) {
+      var p = typeof entry === "string" ? { spec: entry } : entry
+      return p && p.spec === spec && (p.label || "") === label
+    })
+    if (!exists) list.push(label ? { spec: spec, label: label } : spec)
+    saveSettings({ presets: list })
+  }
+
+  function removePreset(index) {
+    var list = customPresets()
+    list.splice(index, 1)
+    pendingDelete = -1
+    saveSettings({ presets: list })
+  }
+
+  function focusedScreen() {
+    var monitor = Hyprland.focusedMonitor
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) if (monitor && screens[i].name === monitor.name) return screens[i]
+    var own = button.QsWindow.window
+    return own && own.screen ? own.screen : screens[0]
+  }
+
+  // The highest-numbered workspace with no windows, from 99 down.
+  function emptyWorkspace() {
+    var busy = {}
+    Hyprland.workspaces.values.forEach(function(ws) {
+      var info = ws.lastIpcObject
+      if (ws.id > 0 && info && info.windows > 0) busy[ws.id] = true
+    })
+    for (var id = 99; id > 10; id--) if (!busy[id]) return String(id)
+    return "99"
+  }
+
+  function startEdit() {
+    if (!canEdit) {
+      Quickshell.execDetached(["notify-send", "-a", "Quilt", "Quilt", "Pick a grid layout for this workspace first, then edit it."])
+      return
+    }
+    root.close()
+    editor.startEdit({
+      screen: focusedScreen(), key: activeKey, spec: shownSpec, original: activeSpec,
+      gapsIn: activeEntry.gapsIn, gapsOut: activeEntry.gapsOut
+    })
+  }
+
+  function startNew() {
+    root.close()
+    Hyprland.refreshWorkspaces()
+    editor.startNew({ screen: focusedScreen(), key: emptyWorkspace(), returnKey: activeKey })
+  }
 
   function applyPreset(preset) {
     var args = ["set", preset.spec]
@@ -139,6 +200,8 @@ Panel {
 
   function activate(index) {
     if (index >= 0 && index < flatPresets.length) applyPreset(flatPresets[index])
+    else if (index === editIndex) { if (canEdit) startEdit() }
+    else if (index === newIndex) startNew()
     else if (index === mirrorIndex) { run(["mirror"]); root.close() }
     else if (index === mainIndex) { run(["main"]); root.close() }
     else if (index === offIndex) { run(["off"]); root.close() }
@@ -152,10 +215,10 @@ Panel {
 
   function buildSections(builtIn) {
     var custom = setting("presets", [])
-    var mine = (Array.isArray(custom) ? custom : []).map(function(entry) {
+    var mine = (Array.isArray(custom) ? custom : []).map(function(entry, index) {
       var p = typeof entry === "string" ? { spec: entry } : entry
-      if (!p || typeof p.spec !== "string" || !parseSpec(p.spec.replace(/\s/g, ""))) return null
-      return { spec: p.spec.replace(/\s/g, ""), label: p.label || p.spec, gapsIn: p.gapsIn, gapsOut: p.gapsOut }
+      if (!p || typeof p.spec !== "string" || !Layout.parse(p.spec.replace(/\s/g, ""))) return null
+      return { spec: p.spec.replace(/\s/g, ""), label: p.label || p.spec, gapsIn: p.gapsIn, gapsOut: p.gapsOut, custom: true, customIndex: index }
     }).filter(Boolean)
     var showBuiltIn = setting("builtInPresets", true) !== false
     var list = (builtIn || []).filter(function(s) { return showBuiltIn || s.title === "ADAPTIVE" })
@@ -168,6 +231,7 @@ Panel {
   onSettingsChanged: buildSections(builtInSections)
 
   onOpenedChanged: {
+    pendingDelete = -1
     if (!opened) return
     cursorIndex = -1
     scroller.contentY = 0
@@ -175,7 +239,31 @@ Panel {
     Hyprland.refreshMonitors()
   }
 
+  onCursorIndexChanged: {
+    var p = flatPresets[cursorIndex]
+    if (!p || p.customIndex !== pendingDelete) pendingDelete = -1
+  }
+
   Component.onCompleted: load()
+
+  IpcHandler {
+    target: root.ipcTarget
+
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function edit(): void { root.startEdit() }
+    function create(): void { root.startNew() }
+  }
+
+  Editor {
+    id: editor
+    script: root.script
+    tilesInfo: root.activeTiles
+    onSaveRequested: function(label, spec) { root.savePreset(label, spec) }
+  }
 
   // A config reload starts a fresh Lua state in Hyprland, which drops the
   // engine; load it again.
@@ -229,7 +317,7 @@ Panel {
     property color color: Color.foreground
     property real gap: 1.5
 
-    readonly property var tiles: root.tilesFor(spec)
+    readonly property var tiles: Layout.tilesFor(spec)
 
     Repeater {
       model: thumb.tiles
@@ -255,7 +343,7 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    readonly property bool grid: root.parseSpec(root.activeTiles && root.activeTiles.workspace === root.activeKey ? root.activeTiles.spec : root.activeSpec) !== null
+    readonly property bool grid: Layout.parse(root.shownSpec) !== null
 
     text: grid ? "" : root.glyph(root.builtInLayouts[root.activeSpec] || 0xF0574)
     iconComponent: grid ? miniQuilt : null
@@ -271,7 +359,7 @@ Panel {
   Component {
     id: miniQuilt
     Thumb {
-      spec: root.activeTiles && root.activeTiles.workspace === root.activeKey ? root.activeTiles.spec : root.activeSpec
+      spec: root.shownSpec
       windows: root.activeTiles && root.activeTiles.workspace === root.activeKey && !root.activeTiles.smart ? root.activeTiles.windows : -1
       color: root.bar ? root.bar.foreground : Color.foreground
       gap: 2
@@ -295,10 +383,12 @@ Panel {
       onActivateRequested: root.activate(root.cursorIndex)
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      // m mirrors, s swaps the focused window into the main tile, x turns
-      // Quilt off for this workspace.
+      // e edits the layout, n draws a new one, m mirrors, s swaps the
+      // focused window into the main tile, x turns Quilt off here.
       onTextKey: function(t) {
-        if (t === "m") root.activate(root.mirrorIndex)
+        if (t === "e") root.activate(root.editIndex)
+        else if (t === "n") root.activate(root.newIndex)
+        else if (t === "m") root.activate(root.mirrorIndex)
         else if (t === "s") root.activate(root.mainIndex)
       }
       onDeleteRequested: root.activate(root.offIndex)
@@ -397,6 +487,13 @@ Panel {
                     fontFamily: root.bar.fontFamily
                     hasCursor: root.cursorIndex === flatIndex
                     onClicked: root.applyPreset(modelData)
+                    // Your own presets: right-click twice to remove.
+                    onRightClicked: {
+                      if (!modelData.custom) return
+                      root.cursorIndex = flatIndex
+                      if (root.pendingDelete === modelData.customIndex) root.removePreset(modelData.customIndex)
+                      else root.pendingDelete = modelData.customIndex
+                    }
                     onHovered: function(h) { if (h) root.cursorIndex = presetButton.flatIndex }
                     onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
 
@@ -431,9 +528,10 @@ Panel {
                       fontSizeMode: Text.HorizontalFit
                       minimumPixelSize: 7
                       textFormat: Text.PlainText
-                      text: presetButton.modelData.spec
-                      color: root.bar.foreground
-                      opacity: 0.7
+                      readonly property bool removing: presetButton.modelData.custom === true && root.pendingDelete === presetButton.modelData.customIndex
+                      text: removing ? "Remove?" : (presetButton.modelData.custom === true && presetButton.modelData.label !== presetButton.modelData.spec ? presetButton.modelData.label : presetButton.modelData.spec)
+                      color: removing ? Color.urgent : root.bar.foreground
+                      opacity: removing ? 1 : 0.7
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -446,6 +544,39 @@ Panel {
           PanelSeparator { foreground: root.bar.foreground }
 
           Row {
+            id: editorRow
+            width: parent.width
+            spacing: Style.space(6)
+
+            readonly property real cellWidth: (width - spacing) / 2
+
+            Button {
+              width: editorRow.cellWidth
+              iconText: root.glyph(0xF18D9) // md-vector-square-edit
+              text: "Edit"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              opacity: root.canEdit ? 1 : 0.45
+              hasCursor: root.cursorIndex === root.editIndex
+              onClicked: root.activate(root.editIndex)
+              onHovered: function(h) { if (h) root.cursorIndex = root.editIndex }
+              onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+            }
+
+            Button {
+              width: editorRow.cellWidth
+              iconText: root.glyph(0xF0F8D) // md-view-grid-plus
+              text: "New"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              hasCursor: root.cursorIndex === root.newIndex
+              onClicked: root.activate(root.newIndex)
+              onHovered: function(h) { if (h) root.cursorIndex = root.newIndex }
+              onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+            }
+          }
+
+          Row {
             id: actionRow
             width: parent.width
             spacing: Style.space(6)
@@ -456,7 +587,6 @@ Panel {
               width: actionRow.cellWidth
               iconText: root.glyph(0xF10E7) // md-flip-horizontal
               text: "Mirror"
-              tooltipText: "Flip the layout left to right"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               hasCursor: root.cursorIndex === root.mirrorIndex
@@ -469,7 +599,6 @@ Panel {
               width: actionRow.cellWidth
               iconText: root.glyph(0xF04E1) // md-swap-horizontal
               text: "To main"
-              tooltipText: "Swap the focused window into the main tile"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               hasCursor: root.cursorIndex === root.mainIndex
@@ -482,7 +611,6 @@ Panel {
               width: actionRow.cellWidth
               iconText: root.glyph(0xF05B2) // md-window-restore
               text: "Off"
-              tooltipText: "Back to Omarchy's default layout on this workspace"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               hasCursor: root.cursorIndex === root.offIndex
@@ -492,13 +620,23 @@ Panel {
             }
           }
 
+          FontMetrics {
+            id: hintMetrics
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          // Three lines high whatever it says, so the popup doesn't jump.
           Text {
             width: parent.width
+            height: Math.ceil(hintMetrics.lineSpacing * 3)
             wrapMode: Text.WordWrap
+            maximumLineCount: 3
+            elide: Text.ElideRight
             textFormat: Text.PlainText
-            text: "Scroll on the bar icon to widen or narrow the focused window's column. Right-click it for the next preset."
+            text: root.hint
             color: root.bar.foreground
-            opacity: 0.5
+            opacity: 0.6
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
           }
@@ -527,7 +665,8 @@ Panel {
     readonly property var entry: root.summary[key] || null
     property var tiles: null
     readonly property var emptyTiles: {
-      if (!entry || !root.parseSpec(entry.spec) || !tiles || tiles.workspace !== key) return []
+      // Not for Smart: a new window there would reshape the whole layout.
+      if (!entry || !Layout.parse(entry.spec) || !tiles || tiles.workspace !== key) return []
       return tiles.tiles.filter(function(t) { return !t.filled })
     }
 
