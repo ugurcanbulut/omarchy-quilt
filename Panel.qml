@@ -621,25 +621,31 @@ Panel {
             }
           }
 
-          FontMetrics {
-            id: hintMetrics
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-
           // Three lines high whatever it says, so the popup doesn't jump.
-          Text {
+          Item {
             width: parent.width
-            height: Math.ceil(hintMetrics.lineSpacing * 3)
-            wrapMode: Text.WordWrap
-            maximumLineCount: 3
-            elide: Text.ElideRight
-            textFormat: Text.PlainText
-            text: root.hint
-            color: root.bar.foreground
-            opacity: 0.6
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
+            height: threeLines.implicitHeight
+
+            Text {
+              id: threeLines
+              visible: false
+              text: "A\nA\nA"
+              font: hintText.font
+            }
+
+            Text {
+              id: hintText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              maximumLineCount: 3
+              elide: Text.ElideRight
+              textFormat: Text.PlainText
+              text: root.hint
+              color: root.bar.foreground
+              opacity: 0.6
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+            }
           }
         }
       }
