@@ -147,10 +147,15 @@ Panel {
       root.bar.shell.updateEntryInline(root.moduleName, Object.assign({}, root.settings || {}, changes))
   }
 
-  function customPresets() {
-    var list = setting("presets", [])
-    return Array.isArray(list) ? list.slice() : []
+  // Lists in settings can arrive as Qt sequences, which Array.isArray turns
+  // down; treating those as empty would hide your presets, and saving would
+  // then write over them.
+  function toArray(value) {
+    if (!value || typeof value !== "object" || typeof value.length !== "number") return []
+    return Array.prototype.slice.call(value)
   }
+
+  function customPresets() { return toArray(setting("presets", [])) }
 
   function savePreset(label, spec) {
     var list = customPresets()
@@ -248,8 +253,7 @@ Panel {
   }
 
   function buildSections(builtIn) {
-    var custom = setting("presets", [])
-    var mine = (Array.isArray(custom) ? custom : []).map(function(entry, index) {
+    var mine = customPresets().map(function(entry, index) {
       var p = typeof entry === "string" ? { spec: entry } : entry
       if (!p || typeof p.spec !== "string" || !Layout.parse(p.spec.replace(/\s/g, ""))) return null
       return { spec: p.spec.replace(/\s/g, ""), label: p.label || p.spec, gapsIn: p.gapsIn, gapsOut: p.gapsOut, custom: true, customIndex: index }
