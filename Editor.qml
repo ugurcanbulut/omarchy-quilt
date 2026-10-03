@@ -721,11 +721,7 @@ PanelWindow {
 
           // Buttons with an icon come out taller than text-only ones and the
           // name field; one height for all keeps the row even.
-          readonly property real controlHeight: {
-            var h = 0
-            for (var i = 0; i < children.length; i++) h = Math.max(h, children[i].implicitHeight)
-            return h
-          }
+          readonly property real controlHeight: Style.space(32)
 
           Button {
             height: controls.controlHeight
