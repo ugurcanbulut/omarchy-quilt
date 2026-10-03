@@ -38,7 +38,8 @@ The popup has 25 built-in layouts in four groups (columns, main + stack, grids a
 - **Windows keep their tiles.** Close a window and its tile stays empty instead of the others shifting around. The next window you open fills it.
 - **Drop areas.** Empty tiles show an outline with a "+". Click one to open the app launcher; the app you pick opens in that tile.
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
-- **App homes.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right. See [App homes](#app-homes).
+- **App homes and one-click launch.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right, and one click opens the apps that aren't there yet. See [App homes](#app-homes).
+- **Monitor defaults.** New workspaces on a monitor can start with a layout of your choice, like Smart on an ultrawide.
 - **Swap with the keyboard.** Omarchy's Super+Shift+arrows swaps the focused window with the one next to it, tiles and all.
 - **Smart layout.** Picks the layout from the number of windows and the monitor's shape:
 
@@ -49,7 +50,7 @@ The popup has 25 built-in layouts in four groups (columns, main + stack, grids a
   | 3 | `6|6:2` | `3|6|3` | `12:3` |
   | 4 | `6:2|6:2` | `3|6|3:2` | `6:2|6:2` |
 
-  Past six windows it switches to an even grid.
+  Past six windows it switches to an even grid. You can set your own layouts for any window count (see [Your own Smart](#your-own-smart-and-monitor-defaults)).
 
 - **Live control.** Scroll on the bar icon to widen or narrow the focused window's column by one grid column (a centered column grows on both sides). Right-click the icon for the next layout. In the popup, **Mirror** flips the layout and **To main** swaps the focused window into the biggest tile.
 - **Per workspace, remembered.** Each workspace keeps its own layout across Hyprland reloads and reboots. The bar icon draws the current workspace's layout.
@@ -75,6 +76,14 @@ Give a tile an app and that app opens there, whatever else is on the workspace:
 - Or run `quilt home` on the focused window to make its tile that app's home (`quilt home 3` for tile 3; `quilt home 3 none` clears it).
 
 A new window goes to its app's home if it's free. If something else sits there, that window steps aside to a free tile (or shares the overflow tile when none is free). Other windows fill the free tiles first and use an empty home only when nothing else is left, so the tile is still free when its app opens. Switching to a preset with homes also moves the windows already on the workspace into them. Apps are matched by their window class, which the editor shows on each tile.
+
+### Launching
+
+- In the popup, presets with app homes have a rocket in the corner. Click it (or press `L` on the preset) to use the preset and open each of its apps that isn't on the workspace yet, straight into its tile.
+- An empty home tile's drop area opens its own app when clicked. Right-click it to pick another app from the launcher.
+- `quilt launch` does the same for the current workspace, and `quilt launch 3` opens tile 3's app.
+
+Quilt starts apps the way Omarchy's launcher does, finding each one's desktop entry by its window class, including web apps installed with Omarchy. If you switch workspaces while an app is starting, its window still arrives on the workspace it was opened for.
 
 ## Install
 
@@ -107,6 +116,19 @@ They live in a `presets` list on the Quilt entry in your bar layout in `~/.confi
 - `quilt use Dev` applies a preset by its label, which is handy for key bindings.
 - Add `"builtInPresets": false` to show only your own layouts plus the adaptive ones.
 
+### Your own Smart and monitor defaults
+
+Two more settings on the same entry:
+
+```json
+{ "id": "ugurcanbulut.quilt",
+  "smart": { "ultrawide": ["3|6|3", "6|6", "3|6|3"] },
+  "monitors": { "DP-3": "smart", "eDP-1": "Dev" } }
+```
+
+- `smart` sets Smart's layout for 1, 2, 3, ... windows, per monitor shape: `standard`, `ultrawide` (2:1 and wider) or `portrait`. Where your list has no usable layout for a window count (it's shorter, or the entry is `null`), Smart uses its own.
+- `monitors` gives new workspaces on a monitor a layout: a spec, `smart`, a Hyprland layout, or one of your presets by label (with its gaps and apps). Run `hyprctl monitors` for the names. A workspace keeps following its monitor's default, including when you change it, until you pick a layout or Off there yourself.
+
 ## Keys
 
 In the popup, the arrow keys and Enter pick a layout, and these act right away:
@@ -114,6 +136,7 @@ In the popup, the arrow keys and Enter pick a layout, and these act right away:
 | Key | Action |
 |---|---|
 | `e` | Edit the current layout |
+| `l` | Use the preset under the cursor and open its apps |
 | `n` | Draw a new layout |
 | `m` | Mirror |
 | `s` | Focused window to the main tile |
@@ -147,6 +170,7 @@ quilt main              # swap the focused window into the main tile
 quilt move <n|empty>    # move the focused window to tile n, or the first empty tile
 quilt swap <a> <b>      # swap the windows in tiles a and b
 quilt target <n>        # open the app launcher; the new app goes to tile n
+quilt launch [n]        # open the home apps missing from the workspace, or tile n's app
 quilt home [n] [app]    # make tile n home to an app (default: the focused window's); "none" clears it
 quilt homes [json]      # print or replace the workspace's app homes, like {"2":"chromium"}
 quilt edit | new        # open the editor
