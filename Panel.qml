@@ -87,6 +87,10 @@ Panel {
     return out
   }
 
+  // One height for the popup's buttons: ones with an icon come out taller
+  // than text-only ones.
+  readonly property real buttonHeight: Style.space(32)
+
   // Scroll deltas not yet worth a whole step (touchpads send many small ones).
   property real wheelAccumulator: 0
 
@@ -919,7 +923,7 @@ Panel {
             spacing: Style.space(6)
 
             // The gear is a square; the two named tabs share the rest.
-            readonly property real gearWidth: Style.space(40)
+            readonly property real gearWidth: root.buttonHeight
             readonly property real cellWidth: (width - gearWidth - spacing * 2) / 2
 
             Repeater {
@@ -932,6 +936,7 @@ Panel {
               Button {
                 required property var modelData
                 width: modelData.icon ? tabRow.gearWidth : tabRow.cellWidth
+                height: root.buttonHeight
                 text: modelData.icon ? "" : modelData.label + (modelData.name === "yours" && root.yoursList.length ? " · " + root.yoursList.length : "")
                 iconText: modelData.icon ? root.glyph(modelData.icon) : ""
                 tooltipText: modelData.icon ? "Settings" : ""
@@ -1119,6 +1124,7 @@ Panel {
                   Button {
                     id: backButton
                     anchors.left: parent.left
+                    height: root.buttonHeight
                     iconText: root.glyph(0xF004D) // md-arrow-left
                     text: "Back"
                     foreground: root.bar.foreground
@@ -1168,6 +1174,7 @@ Panel {
 
             Button {
               width: editorRow.cellWidth
+              height: root.buttonHeight
               iconText: root.glyph(0xF18D9) // md-vector-square-edit
               text: "Edit"
               foreground: root.bar.foreground
@@ -1181,6 +1188,7 @@ Panel {
 
             Button {
               width: editorRow.cellWidth
+              height: root.buttonHeight
               iconText: root.glyph(0xF0F8D) // md-view-grid-plus
               text: "New"
               foreground: root.bar.foreground
@@ -1201,6 +1209,7 @@ Panel {
 
             Button {
               width: actionRow.cellWidth
+              height: root.buttonHeight
               iconText: root.glyph(0xF10E7) // md-flip-horizontal
               text: "Mirror"
               foreground: root.bar.foreground
@@ -1213,6 +1222,7 @@ Panel {
 
             Button {
               width: actionRow.cellWidth
+              height: root.buttonHeight
               iconText: root.glyph(0xF04E1) // md-swap-horizontal
               text: "To main"
               foreground: root.bar.foreground
@@ -1225,6 +1235,7 @@ Panel {
 
             Button {
               width: actionRow.cellWidth
+              height: root.buttonHeight
               iconText: root.glyph(0xF05B2) // md-window-restore
               text: "Off"
               foreground: root.bar.foreground
