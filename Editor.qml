@@ -21,8 +21,6 @@ PanelWindow {
   property string mode: ""
   property string key: ""
   property string returnKey: ""
-  property string originalSpec: ""
-  property string startSpec: ""
   property string gapsIn: ""
   property string gapsOut: ""
   // App homes the workspace had when editing began ({ "2": "chromium" }),
@@ -80,7 +78,7 @@ PanelWindow {
   readonly property color accent: Color.accent
   readonly property color warn: Color.urgent
 
-  signal saveRequested(string label, string spec, var apps)
+  signal saveRequested(string label, string spec, var apps, string gapsIn, string gapsOut)
 
   visible: mode !== ""
   color: "transparent"
@@ -108,7 +106,8 @@ PanelWindow {
     draw = null
     dividerDrag = null
     dragTile = -1
-    queue = []
+    waitingSave = null
+    saveWait.stop()
     nameField.text = ""
     card.x = Qt.binding(function() { return (editor.width - card.width) / 2 })
     card.y = Qt.binding(function() { return editor.height - card.height - Style.space(40) })
@@ -123,7 +122,6 @@ PanelWindow {
     screen = options.screen
     key = options.key
     returnKey = ""
-    originalSpec = options.original
     gapsIn = options.gapsIn !== undefined && options.gapsIn !== null ? String(options.gapsIn) : ""
     gapsOut = options.gapsOut !== undefined && options.gapsOut !== null ? String(options.gapsOut) : ""
     var had = {}
@@ -135,7 +133,9 @@ PanelWindow {
     gh = layout.gh
     rects = layout.rects
     appliedSpec = spec
-    startSpec = spec
+    // The engine remembers the workspace as it is, for Cancel, and each
+    // shape the edit passes through, for undo.
+    send(["editing", "start"])
     area = tilesInfo && tilesInfo.workspace === key && tilesInfo.area ? tilesInfo.area : null
     if (!area) areaProc.running = true
     arrived = true
@@ -149,7 +149,6 @@ PanelWindow {
     screen = options.screen
     returnKey = options.returnKey
     key = options.key
-    originalSpec = ""
     gapsIn = ""
     gapsOut = ""
     startHomes = {}
@@ -172,24 +171,48 @@ PanelWindow {
   // keepHomes false: leave the workspace's app homes as the engine has them.
   function finish(keepHomes) {
     var back = mode === "new" && arrived ? returnKey : ""
-    // Edit: the workspace keeps its apps' homes, or drops them.
+    waitingSave = null
+    saveWait.stop()
+    // Edit: the workspace keeps its apps' homes, or drops them. The engine
+    // reads each tile's app once the last change has gone through.
     if (editing && keepHomes !== false) {
-      if (rememberApps) send(["homes", JSON.stringify(appsToRemember())])
+      if (rememberApps) send(["homes", "remember"])
       else if (Object.keys(startHomes).length) send(["homes", "{}"])
+      send(["editing", "done"])
     }
     mode = ""
     if (back) focusWorkspace(back)
   }
 
+  // Everything back as it was: layout, gaps, homes, windows, and following
+  // the monitor's default, whatever happened (undo included) in between.
   function cancel() {
-    if (editing && appliedSpec !== startSpec) send(["set", originalSpec].concat(gapArgs(), [JSON.stringify(startHomes)]))
+    if (editing) send(["editing", "cancel"])
     finish(false)
   }
 
-  function save(use) {
+  // Save pressed before the engine shows the layout drawn here: the apps to
+  // keep with it come from the engine's picture, so wait for it (briefly).
+  property var waitingSave: null
+  onEngineCaughtUpChanged: if (engineCaughtUp && waitingSave) save(waitingSave.use)
+
+  Timer {
+    id: saveWait
+    interval: 2000
+    onTriggered: if (editor.waitingSave) editor.save(editor.waitingSave.use, true)
+  }
+
+  function save(use, force) {
     if (!rects.length || !Layout.parse(spec)) return
+    if (editing && rememberApps && !engineCaughtUp && !force) {
+      waitingSave = { use: use }
+      saveWait.restart()
+      return
+    }
+    waitingSave = null
+    saveWait.stop()
     var label = nameField.text.trim()
-    saveRequested(label, spec, editing && rememberApps ? appsToRemember() : null)
+    saveRequested(label, spec, editing && rememberApps && engineCaughtUp ? appsToRemember() : null, gapsIn, gapsOut)
     if (use && returnKey) {
       var target = returnKey
       finish()

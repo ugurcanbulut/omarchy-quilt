@@ -997,6 +997,25 @@ local function active_in(key)
   if w and not w.floating and ws_key(w.workspace) == key then return tostring(w.stable_id), w end
 end
 
+-- Whether a layout keeps its tiles, only resized: as many tiles, each still
+-- overlapping the tile with its number. Windows and homes then keep their
+-- tile numbers, since a big resize (undo in the editor, say) can leave a
+-- tile overlapping its neighbour's new place more than its own.
+local function same_tiles(old, new)
+  if #old.tiles ~= #new.tiles then return false end
+  for i, t in ipairs(old.tiles) do
+    if overlap(t, new.tiles[i]) <= 1e-9 then return false end
+  end
+  return true
+end
+
+local function copy(t)
+  if not t then return nil end
+  local out = {}
+  for k, v in pairs(t) do out[k] = v end
+  return out
+end
+
 -- Windows follow their tiles to a new layout: each one goes to the free tile
 -- that overlaps its old tile most.
 local function remap(s, old, new)
@@ -1004,6 +1023,7 @@ local function remap(s, old, new)
     s.assign = {}
     return
   end
+  if same_tiles(old, new) then return end
   local taken, moved = {}, {}
   local ids = {}
   for id in pairs(s.assign) do ids[#ids + 1] = id end
@@ -1036,6 +1056,7 @@ end
 -- Homes follow their tiles to a new layout, the way windows do.
 local function remap_homes(homes, old, new)
   if not homes or not old or not new then return nil end
+  if same_tiles(old, new) then return copy(homes) end
   local out, taken, any = {}, {}, false
   local tiles = {}
   for tile in pairs(homes) do tiles[#tiles + 1] = tile end
@@ -1117,12 +1138,60 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
   end
   if not new or spec == "smart" then release_tabs(key, s) end
   local old = Q.parse(s.spec or "")
+  -- While the editor reshapes the layout, each shape it passes through is
+  -- remembered, so coming back to one (undo) puts windows and homes back
+  -- where they were in it.
+  local editing = homes == "keep" and Q.editing and Q.editing[key]
+  if editing and s.spec then editing.seen[s.spec] = { assign = copy(s.assign), homes = copy(s.homes) } end
   if homes == "keep" then s.homes = remap_homes(s.homes, old, new) else s.homes = clean_homes(homes, new) end
   remap(s, old, new)
   s.spec = new and spec:gsub("%s", "") or spec
+  local seen = editing and editing.seen[s.spec]
+  if seen then
+    local assign, used = {}, {}
+    for id, tile in pairs(seen.assign) do
+      if window_by_id(key, id) then assign[id], used[tile] = tile, true end
+    end
+    for id, tile in pairs(s.assign) do
+      if assign[id] == nil and not used[tile] then assign[id], used[tile] = tile, true end
+    end
+    s.assign, s.homes = assign, copy(seen.homes)
+  end
   s.gaps_in, s.gaps_out = tonumber(gaps_in), tonumber(gaps_out)
   arrange(key, s)
   apply_rule(key)
+  Q.save()
+  Q.refresh(key)
+  return "ok"
+end
+
+-- The on-screen editor: "start" remembers the workspace as it is, "cancel"
+-- puts all of it back (layout, gaps, homes, windows, following a monitor
+-- default), "done" keeps what the editor left.
+function Q.edit(key, action)
+  Q.editing = Q.editing or {}
+  local s = Q.state.workspaces[key]
+  if action == "start" then
+    if not s or not s.spec then return "This workspace doesn't use a Quilt layout" end
+    Q.editing[key] = { seen = {}, start = { spec = s.spec, gaps_in = s.gaps_in, gaps_out = s.gaps_out,
+      homes = copy(s.homes), from_default = s.from_default, assign = copy(s.assign), order = copy(s.order) } }
+    return "ok"
+  end
+  local e = Q.editing[key]
+  Q.editing[key] = nil
+  if action ~= "cancel" or not e then return "ok" end
+  local was = e.start
+  local result = Q.set(key, was.spec, was.gaps_in, was.gaps_out, was.homes)
+  if result ~= "ok" then return result end
+  s = Q.state.workspaces[key]
+  local assign, used = {}, {}
+  for id, tile in pairs(was.assign or {}) do
+    if window_by_id(key, id) then assign[id], used[tile] = tile, true end
+  end
+  for id, tile in pairs(s.assign) do
+    if assign[id] == nil and not used[tile] then assign[id], used[tile] = tile, true end
+  end
+  s.assign, s.order, s.from_default = assign, copy(was.order) or s.order, was.from_default
   Q.save()
   Q.refresh(key)
   return "ok"
@@ -1344,6 +1413,19 @@ function Q.homes(key, homes)
   local s = Q.state.workspaces[key]
   local layout = s and Q.parse(s.spec or "")
   if not layout or s.spec == "smart" then return "App homes work on Quilt's grid layouts" end
+  -- "remember": each tile's app becomes its home, and an empty tile keeps
+  -- the home it has (the editor's Remember apps, read when it's done rather
+  -- than from a picture that may be a step behind).
+  if homes == "remember" then
+    homes = {}
+    for id, tile in pairs(s.assign) do
+      local app = app_of(window_by_id(key, id))
+      if app ~= "" and app ~= "?" then homes[tile] = app end
+    end
+    for tile, app in pairs(s.homes or {}) do
+      if homes[tile] == nil then homes[tile] = app end
+    end
+  end
   s.homes = clean_homes(homes, layout)
   s.from_default = nil
   arrange(key, s)

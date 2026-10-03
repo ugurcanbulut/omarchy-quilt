@@ -18,8 +18,12 @@
 #                            app whose home is tile n
 #   quilt home [n] [app]     make tile n home to an app (default: the focused
 #                            window's app and tile); "none" clears it
-#   quilt homes [json]       print or replace the workspace's app homes
+#   quilt homes [json]       print or replace the workspace's app homes;
+#                            "remember" makes each tile's app its home
 #   quilt edit               edit the active workspace's layout on screen
+#   quilt editing <start|done|cancel>
+#                            the editor's session: cancel puts the workspace
+#                            back as it was at start
 #   quilt new                draw a new layout on an empty workspace
 #   quilt status             print the active workspace's layout as JSON
 #   quilt area               print the active workspace's tile area as JSON
@@ -80,7 +84,7 @@ lua_string() {
 # App homes as a Lua argument: {"2":"chromium"} -> {[2]="chromium"}, "keep"
 # stays a string, anything else is nil (none).
 lua_homes() {
-  [[ $1 == keep ]] && { echo "'keep'"; return; }
+  [[ $1 == keep || $1 == remember ]] && { echo "'$1'"; return; }
   jq -r 'if type == "object" then "{" + ([to_entries[] | select((.key | test("^[0-9]+$")) and (.value | type == "string") and .value != "")
     | "[\(.key)]=\(.value | ascii_downcase | @json)"] | join(",")) + "}" else "nil" end' <<<"${1:-null}" 2>/dev/null || echo nil
 }
@@ -361,6 +365,10 @@ launch)
   launch "${2:-}" "${3:-}"
   ;;
 edit) omarchy-shell "$ID" edit ;;
+editing)
+  [[ ${2:-} =~ ^(start|done|cancel)$ ]] || usage
+  call edit "$(lua_string "$(workspace_key)")" "$(lua_string "$2")"
+  ;;
 new) omarchy-shell "$ID" create ;;
 area)
   ensure_loaded

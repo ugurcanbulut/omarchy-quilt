@@ -392,18 +392,26 @@ Panel {
   function customPresets() { return toArray(option("presets", [])) }
 
   // apps: { "2": "chromium", ... } to keep with the preset, or nothing.
-  function savePreset(label, spec, apps) {
+  // gapsIn, gapsOut: the workspace's own gaps in pixels, or "" for the
+  // default.
+  function savePreset(label, spec, apps, gapsIn, gapsOut) {
     var list = customPresets()
     var hasApps = apps && Object.keys(apps).length > 0
+    var gaps = {}
+    if (gapsIn !== undefined && gapsIn !== "" && !isNaN(Number(gapsIn))) gaps.gapsIn = Number(gapsIn)
+    if (gapsOut !== undefined && gapsOut !== "" && !isNaN(Number(gapsOut))) gaps.gapsOut = Number(gapsOut)
+    var hasGaps = Object.keys(gaps).length > 0
     var exists = list.some(function(entry) {
       var p = typeof entry === "string" ? { spec: entry } : entry
       return p && p.spec === spec && (p.label || "") === label && JSON.stringify(p.apps || {}) === JSON.stringify(hasApps ? apps : {})
+        && p.gapsIn === gaps.gapsIn && p.gapsOut === gaps.gapsOut
     })
     if (!exists) {
       var entry = { spec: spec }
       if (label) entry.label = label
+      if (hasGaps) Object.assign(entry, gaps)
       if (hasApps) entry.apps = apps
-      list.push(label || hasApps ? entry : spec)
+      list.push(label || hasApps || hasGaps ? entry : spec)
     }
     saveSettings({ presets: list })
   }
@@ -589,7 +597,7 @@ Panel {
     id: editor
     script: root.script
     tilesInfo: root.activeTiles
-    onSaveRequested: function(label, spec, apps) { root.savePreset(label, spec, apps) }
+    onSaveRequested: function(label, spec, apps, gapsIn, gapsOut) { root.savePreset(label, spec, apps, gapsIn, gapsOut) }
   }
 
   // A config reload starts a fresh Lua state in Hyprland, which drops the
