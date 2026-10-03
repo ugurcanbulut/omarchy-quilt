@@ -41,7 +41,7 @@ The popup has two tabs. **Built-in** holds 25 layouts in four groups (columns, m
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
 - **App homes and one-click launch.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right, and one click opens the apps that aren't there yet. See [App homes](#app-homes).
 - **Monitor defaults.** New workspaces on a monitor can start with a layout of your choice, like Smart on an ultrawide.
-- **Swap with the keyboard.** Omarchy's Super+Shift+arrows swaps the focused window with the one next to it, tiles and all.
+- **Swap with the keyboard or mouse.** Omarchy's Super+Shift+arrows swaps the focused window with the one next to it, and Super+drag drops a window onto another tile, trading places with the window there (or moving into an empty tile).
 - **Smart layout.** Picks the layout from the number of windows and the monitor's shape:
 
   | Windows | Standard | Ultrawide | Vertical |

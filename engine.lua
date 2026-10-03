@@ -357,6 +357,33 @@ end
 
 local function app_of(window) return window and (window.class or ""):lower() or "" end
 
+-- How long after a window is lifted (floated) a return to the layout still
+-- counts as a drop, in seconds.
+local DROP_SECONDS = 20
+
+-- A Super+drag floats the window while it moves and hands it back to the
+-- layout when it's dropped, as if it were new. If it was lifted from this
+-- workspace moments ago and the pointer is on it, it was dropped: the tile
+-- under the pointer (and where it was lifted from) are returned.
+local function dropped_on(id, w, key, tiles)
+  local lift = Q.lifted and Q.lifted[id]
+  if not lift then return nil end
+  Q.lifted[id] = nil
+  if lift.key ~= key or os.time() - lift.at > DROP_SECONDS then return nil end
+  local ok, c = pcall(hl.get_cursor_pos)
+  local at, size = w.at, w.size
+  if not ok or not c or not at or not size then return nil end
+  local wx, wy, ww, wh = at.x or at[1], at.y or at[2], size.x or size[1], size.y or size[2]
+  if not (wx and wy and ww and wh) or c.x < wx or c.x > wx + ww or c.y < wy or c.y > wy + wh then return nil end
+  for i, b in ipairs(tiles) do
+    if c.x >= b.x and c.x < b.x + b.w and c.y >= b.y and c.y < b.y + b.h then return i, lift end
+  end
+end
+
+local function position(list, value)
+  for i, v in ipairs(list) do if v == value then return i end end
+end
+
 ------------------------------------------------------------------------- tabs
 
 -- Hyprland hands a group of windows to the layout as one window: its first
@@ -567,7 +594,18 @@ local function recalculate(ctx)
     end
     for _, t in ipairs(ctx.targets) do
       local id = t.window and tostring(t.window.stable_id)
-      if id and not known[id] then order[#order + 1], known[id] = id, true end
+      if id and not known[id] then
+        order[#order + 1], known[id] = id, true
+        -- Dropped: back to where it was lifted from, then trade places with
+        -- the window in the tile under the pointer.
+        local tile, lift = dropped_on(id, t.window, key, tiles)
+        if tile and lift.slot then
+          table.remove(order)
+          table.insert(order, math.min(lift.slot, #order + 1), id)
+          local here, there = position(order, id), position(fill, tile)
+          if there and order[there] then order[here], order[there] = order[there], id end
+        end
+      end
     end
     if #order ~= #s.order then Q.dirty = true end
     s.order = order
@@ -622,6 +660,23 @@ local function recalculate(ctx)
       if id and not assign[id] then
         local want = s.pending
         if want and (used[want] or want > #tiles) then want = nil end
+        -- Dropped on a tile: it goes there, and that tile's window to the
+        -- tile it was lifted from (or the overflow if that's gone).
+        local drop, lift = dropped_on(id, t.window, key, tiles)
+        if drop then
+          local other = owner[drop]
+          if other and other ~= id then
+            local back = lift.tile and lift.tile <= #tiles and not used[lift.tile] and lift.tile or nil
+            assign[other] = back
+            if back then
+              used[back], owner[back] = true, other
+            elseif targets[other] then
+              overflow[#overflow + 1] = targets[other]
+            end
+          end
+          want, used[drop] = drop, false
+          s.pending, s.pending_at = nil, nil
+        end
         want = want or home_for(apps[id])
         if not want then
           for _, i in ipairs(fill) do if not used[i] and not homes[i] then want = i break end end
@@ -1232,6 +1287,11 @@ function Q.load()
       if not w or not w.floating or not w.workspace then return end
       local key, id = ws_key(w.workspace), tostring(w.stable_id)
       local s = Q.state.workspaces[key]
+      -- Where it was, in case this is a Super+drag that ends in a drop.
+      if s and (s.assign[id] or position(s.order, id)) then
+        Q.lifted = Q.lifted or {}
+        Q.lifted[id] = { key = key, tile = s.assign[id], slot = position(s.order, id), at = os.time() }
+      end
       if s and forget(s, id) then
         Q.dirty = true
         settle(key, id)
