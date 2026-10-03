@@ -89,6 +89,14 @@ lua_homes() {
     | "[\(.key)]=\(.value | ascii_downcase | @json)"] | join(",")) + "}" else "nil" end' <<<"${1:-null}" 2>/dev/null || echo nil
 }
 
+# Act on this workspace from now on, switching to it if it isn't the one
+# shown (switching to the current one can go back to the previous one with
+# Hyprland's back-and-forth option, or close an open scratchpad).
+focus_workspace() {
+  [[ $1 == "$(QUILT_WORKSPACE='' workspace_key)" ]] || hyprctl dispatch "hl.dsp.focus({ workspace = $(lua_string "$1") })" >/dev/null
+  QUILT_WORKSPACE=$1
+}
+
 # Run Lua inside Hyprland; repl prints what the code returns.
 lua() {
   hyprctl repl "$1" 2>&1
@@ -118,21 +126,32 @@ config_lua() {
       elif type == "string" then @json
       elif type == "number" or type == "boolean" then tostring
       else "nil" end;
-    [.presets[]? | if type == "string" then { spec: . } else . end | select(.spec | type == "string")] as $presets
-    | def preset($name): first($presets[] | select((.label // "" | ascii_downcase) == ($name | ascii_downcase))) // { spec: $name };
+    [.presets[]? | if type == "string" then { spec: . } else . end | objects | select(.spec | type == "string")] as $presets
+    | def preset($name): first($presets[] | select(((.label | strings) // "" | ascii_downcase) == ($name | ascii_downcase))) // { spec: $name };
     { overflow: (if .overflow == "stack" then "stack" else "tabs" end),
       navigation: ((.navigation != false) and $focus),
       swapping: ((.navigation != false) and $swap),
       smart: (.smart // {} | if type == "object" then . else {} end),
       monitors: (.monitors // {} | if type == "object" then . else {} end | with_entries(.value |= (
         (if type == "string" then preset(.) elif type == "object" then . else {} end)
-        | { spec: ((.spec // "") | gsub(" "; "")), gaps_in: .gapsIn, gaps_out: .gapsOut, homes: (.apps // {}) }))) }
-    | lua' <<<"$1" 2>/dev/null || echo "{}"
+        | { spec: ((.spec | strings) // "" | gsub(" "; "")), gaps_in: .gapsIn, gaps_out: .gapsOut, homes: (.apps // {} | objects) }))) }
+    | lua' <<<"$1" 2>/dev/null
+}
+
+# The settings as a Lua table, or nothing if shell.json can't be read: the
+# engine then keeps the ones it has, rather than taking "no settings" and
+# putting every workspace's monitor default away.
+settings_lua() {
+  local settings
+  settings=$(widget_settings) && [[ -n $settings ]] || return 1
+  config_lua "$settings"
 }
 
 configure() {
+  local config
   ensure_loaded
-  call configure "$(config_lua "$(widget_settings)")"
+  config=$(settings_lua) && [[ -n $config ]] || { notify "Couldn't read Quilt's settings from shell.json; keeping the current ones"; return 1; }
+  call configure "$config"
 }
 
 load() {
@@ -144,7 +163,9 @@ $(cat "$DIR/engine.lua")")
   [[ $result == ok ]] || { notify "Couldn't load the layout engine: $result"; exit 1; }
   result=$(lua 'return quilt.load()')
   [[ $result == ok ]] || { notify "Couldn't start Quilt: $result"; exit 1; }
-  lua "return quilt.configure($(config_lua "$(widget_settings)"))" >/dev/null
+  local config
+  config=$(settings_lua) && [[ -n $config ]] && lua "return quilt.configure($config)" >/dev/null
+  return 0
 }
 
 ensure_loaded() {
@@ -161,18 +182,21 @@ call() {
 }
 
 # The Quilt entry in the bar layout, for custom presets.
+# Fails (and prints nothing) if shell.json can't be read.
 widget_settings() {
-  jq -c --arg id "$ID" 'first(.bar.layout[]?[]? | select(.id == $id)) // {}' "$SHELL_CONFIG" 2>/dev/null || echo '{}'
+  jq -c --arg id "$ID" 'first(.bar.layout[]?[]? | objects | select(.id == $id)) // {}' "$SHELL_CONFIG" 2>/dev/null
 }
 
 # Built-in presets (only the adaptive ones with builtInPresets: false), then
 # the user's own.
-presets() {
+# One JSON object per line: built-in ones as {spec, builtin}, yours with
+# their gaps and apps.
+preset_entries() {
   local settings
-  settings=$(widget_settings)
-  jq -r --argjson builtin "$(jq '.builtInPresets != false' <<<"$settings")" \
-    '.sections[] | select($builtin or .title == "ADAPTIVE") | .presets[].spec' "$DIR/presets.json"
-  jq -r '.presets[]? | if type == "string" then . else .spec end' <<<"$settings"
+  settings=$(widget_settings) || settings='{}'
+  jq -c --argjson builtin "$(jq '.builtInPresets != false' <<<"$settings")" \
+    '.sections[] | select($builtin or .title == "ADAPTIVE") | .presets[] | { spec: (.spec | gsub(" "; "")), builtin: true }' "$DIR/presets.json"
+  jq -c '.presets[]? | if type == "string" then { spec: . } else . end | objects | select(.spec | type == "string") | .spec |= gsub(" "; "")' <<<"$settings"
 }
 
 current_spec() {
@@ -187,7 +211,7 @@ set_spec() {
   local spec=$1 gaps_in=${2:-} gaps_out=${3:-} apps=${4:-} preset
   spec=${spec// /}
   local column='[0-9]+(:[0-9]+(/[0-9]+)*)?' rect='[0-9]+,[0-9]+,[0-9]+,[0-9]+'
-  [[ $spec =~ ^(smart|dwindle|scrolling|monocle|off|$column(\|$column)*|@[0-9]+x[0-9]+:$rect(\;$rect)*)$ ]] || {
+  [[ $spec =~ ^(smart|dwindle|scrolling|monocle|master|off|$column(\|$column)*|@[0-9]+x[0-9]+:$rect(\;$rect)*)$ ]] || {
     notify "\"$1\" isn't a preset Quilt understands"
     exit 1
   }
@@ -253,10 +277,8 @@ start_app() {
 # a tile with no home); without, every home app not open on the workspace.
 launch() {
   local tile=${1:-} key homes app present
-  if [[ -n ${2:-} ]]; then
-    QUILT_WORKSPACE=$2
-    hyprctl dispatch "hl.dsp.focus({ workspace = $(lua_string "$2") })" >/dev/null
-  fi
+  [[ -n ${2:-} ]] && focus_workspace "$2"
+
   key=$(workspace_key)
   ensure_loaded
   homes=$(lua "return quilt.status($(lua_string "$key"))" | jq -c '.homes // {}')
@@ -292,25 +314,46 @@ use_preset() {
   set_spec "$(jq -r .spec <<<"$preset")" "$(jq -r '.gapsIn // "-"' <<<"$preset")" "$(jq -r '.gapsOut // "-"' <<<"$preset")" "$(jq -c '.apps // {}' <<<"$preset")"
 }
 
+# Next or previous preset. Two presets can share a spec (a built-in one and
+# yours, with apps), so the place in the list is remembered per workspace.
 cycle() {
-  local step=$1 current list i count args=()
+  local step=$1 current key mark entries=() specs=() kept=() usable=() i count at=-1 saved entry
+  key=$(workspace_key)
   current=$(current_spec)
+  mapfile -t entries < <(preset_entries)
+  ((${#entries[@]} > 0)) || exit 1
   # Only presets the engine can use, so a broken one is skipped.
-  mapfile -t list < <(presets)
-  for i in "${list[@]}"; do args+=("$(lua_string "${i// /}")"); done
-  ((${#args[@]} > 0)) || exit 1
-  mapfile -t list < <(lua "return quilt.usable($(IFS=,; echo "${args[*]}"))")
-  count=${#list[@]}
-  ((count > 0)) || exit 1
-  for ((i = 0; i < count; i++)); do
-    [[ ${list[i]// /} == "$current" ]] && break
+  mapfile -t specs < <(printf '%s\n' "${entries[@]}" | jq -r .spec)
+  for i in "${!specs[@]}"; do specs[i]=$(lua_string "${specs[i]}"); done
+  mapfile -t usable < <(lua "return quilt.usable($(IFS=,; echo "${specs[*]}"))")
+  declare -A ok=()
+  for i in "${usable[@]}"; do ok[$i]=1; done
+  for entry in "${entries[@]}"; do
+    [[ -n ${ok[$(jq -r .spec <<<"$entry")]:-} ]] && kept+=("$entry")
   done
-  if ((i == count)); then
+  count=${#kept[@]}
+  ((count > 0)) || exit 1
+  mark="${XDG_RUNTIME_DIR:-/tmp}/quilt/cycle-${key//[\/:]/_}"
+  saved=$(cat "$mark" 2>/dev/null)
+  if [[ $saved =~ ^[0-9]+$ ]] && ((saved < count)) && [[ $(jq -r .spec <<<"${kept[saved]}") == "$current" ]]; then
+    at=$saved
+  else
+    for ((i = 0; i < count; i++)); do
+      [[ $(jq -r .spec <<<"${kept[i]}") == "$current" ]] && { at=$i; break; }
+    done
+  fi
+  if ((at < 0)); then
     i=$((step > 0 ? 0 : count - 1))
   else
-    i=$(((i + step + count) % count))
+    i=$(((at + step + count) % count))
   fi
-  set_spec "${list[i]}"
+  mkdir -p "${mark%/*}" && echo "$i" >"$mark"
+  entry=${kept[i]}
+  if [[ $(jq -r '.builtin // false' <<<"$entry") == true ]]; then
+    set_spec "$(jq -r .spec <<<"$entry")"
+  else
+    set_spec "$(jq -r .spec <<<"$entry")" "$(jq -r '.gapsIn // "-"' <<<"$entry")" "$(jq -r '.gapsOut // "-"' <<<"$entry")" "$(jq -c '.apps // {}' <<<"$entry")"
+  fi
 }
 
 check_requirements
@@ -335,10 +378,7 @@ target)
   [[ ${2:-} =~ ^[0-9]+$ ]] || usage
   # A drop area on another monitor names its workspace; focus it first so
   # the app opens there.
-  if [[ -n ${3:-} ]]; then
-    QUILT_WORKSPACE=$3
-    hyprctl dispatch "hl.dsp.focus({ workspace = $(lua_string "$3") })" >/dev/null
-  fi
+  [[ -n ${3:-} ]] && focus_workspace "$3"
   call target "$(lua_string "$(workspace_key)")" "$2" && omarchy-menu summon apps
   ;;
 deselect)
