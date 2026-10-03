@@ -1275,12 +1275,21 @@ end
 -- Hyprland's focus reason for a click (eFocusReason in FocusState.hpp).
 local FOCUS_CLICK = 5
 
--- Omarchy's Super+arrow bindings, which Quilt takes over (and gives back).
-local FOCUS_KEYS = {
-  { "l", "SUPER + LEFT", "Focus on left window" },
-  { "r", "SUPER + RIGHT", "Focus on right window" },
-  { "u", "SUPER + UP", "Focus on above window" },
-  { "d", "SUPER + DOWN", "Focus on below window" },
+-- Omarchy's Super+arrow and Super+Shift+arrow bindings, which Quilt takes
+-- over (and gives back): direction, chord, Omarchy's description.
+local KEYS = {
+  focus = {
+    { "l", "SUPER + LEFT", "Focus on left window" },
+    { "r", "SUPER + RIGHT", "Focus on right window" },
+    { "u", "SUPER + UP", "Focus on above window" },
+    { "d", "SUPER + DOWN", "Focus on below window" },
+  },
+  swap = {
+    { "l", "SUPER + SHIFT + LEFT", "Swap window to the left" },
+    { "r", "SUPER + SHIFT + RIGHT", "Swap window to the right" },
+    { "u", "SUPER + SHIFT + UP", "Swap window up" },
+    { "d", "SUPER + SHIFT + DOWN", "Swap window down" },
+  },
 }
 
 -- The nearest tile from tile `from` in a direction, overlapping it across
@@ -1369,26 +1378,59 @@ function Q.navigate(dir)
   Q.refresh(key)
 end
 
--- Take Super+arrows over (on), or give Omarchy's bindings back (off) if
+-- Super+Shift+arrows on a Quilt grid workspace: the focused window trades
+-- tiles with the window in the next tile that way, or moves into it if it's
+-- empty. Anywhere else (other layouts, past the last tile, a window without
+-- a tile) it's Hyprland's own swap.
+function Q.swap_toward(dir)
+  local fallback = function() hl.dispatch(hl.dsp.window.swap({ direction = dir })) end
+  local monitor = hl.get_active_monitor()
+  local key = monitor and ws_key(monitor.active_workspace)
+  local s = key and Q.state.workspaces[key]
+  local layout = s and s.spec ~= "smart" and Q.parse(s.spec or "")
+  if not layout then return fallback() end
+  -- A picked empty tile has the keyboard, and no window to move.
+  if s.pending and s.pending_nav then return end
+  local w = hl.get_active_window()
+  if not w or w.floating or not w.workspace or ws_key(w.workspace) ~= key then return fallback() end
+  local id = tostring(w.stable_id)
+  local from = s.assign[id]
+  local to = from and neighbour(layout.tiles, from, dir)
+  if not to then return fallback() end
+  Q.swap(key, from, to, id)
+  -- The pointer goes along, as with Hyprland's own swap.
+  local area = area_for(key, s)
+  if area and hl.get_config("cursor.no_warps") ~= true then
+    local t = tiles_for(area, layout)[to]
+    hl.dispatch(hl.dsp.cursor.move({ x = math.floor(t.x + t.w / 2), y = math.floor(t.y + t.h / 2) }))
+  end
+end
+
+-- Take a set of keys over (on), or give Omarchy's bindings back (off) if
 -- Quilt took them. The script only asks for this when they are Omarchy's.
-local function set_navigation(on)
-  if on == (Q.nav_on == true) then return end
-  for _, k in ipairs(FOCUS_KEYS) do pcall(hl.unbind, k[2]) end
-  for _, k in ipairs(FOCUS_KEYS) do
+local function set_keys(set, on)
+  Q.keys_on = Q.keys_on or {}
+  if on == (Q.keys_on[set] == true) then return end
+  local run = set == "focus" and "navigate" or "swap_toward"
+  local own = function(dir)
+    return set == "focus" and hl.dsp.focus({ direction = dir }) or hl.dsp.window.swap({ direction = dir })
+  end
+  for _, k in ipairs(KEYS[set]) do pcall(hl.unbind, k[2]) end
+  for _, k in ipairs(KEYS[set]) do
     local dir, chord, description = k[1], k[2], k[3]
     if on then
       hl.bind(chord, function()
-        local ok, err = pcall(function() return quilt.navigate(dir) end)
+        local ok, err = pcall(function() return quilt[run](dir) end)
         if not ok then
           quilt.last_error = tostring(err)
-          hl.dispatch(hl.dsp.focus({ direction = dir }))
+          hl.dispatch(own(dir))
         end
       end, { description = description })
     else
-      hl.bind(chord, hl.dsp.focus({ direction = dir }), { description = description })
+      hl.bind(chord, own(dir), { description = description })
     end
   end
-  Q.nav_on = on
+  Q.keys_on[set] = on
 end
 
 ------------------------------------------------------------- monitor defaults
@@ -1439,7 +1481,8 @@ function Q.configure(config)
     end
   end
   Q.config = { smart = smart, monitors = monitors, overflow = config.overflow == "stack" and "stack" or "tabs" }
-  set_navigation(config.navigation == true)
+  set_keys("focus", config.navigation == true)
+  set_keys("swap", config.swapping == true)
   local ok, list = pcall(hl.get_workspaces)
   for _, ws in ipairs(ok and list or {}) do follow_default(ws_key(ws), ws) end
   -- Smart workspaces pick up your layouts.

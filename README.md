@@ -38,11 +38,11 @@ The popup has two tabs. **Built-in** holds 25 layouts in four groups (columns, m
 - **Windows keep their tiles.** Close a window and its tile stays empty instead of the others shifting around. The next window you open fills it.
 - **Extra windows become tabs.** With more windows than tiles, the extras join the last tile as tabs (Hyprland's window groups) and move back out into their own tiles as soon as there's room, oldest first. A group you make yourself with Super+G takes one tile and keeps it while you switch tabs.
 - **Drop areas.** Empty tiles show an outline with a "+". Click one to open the app launcher; the app you pick opens in that tile.
-- **Super+arrows reach empty tiles.** On a grid layout, Omarchy's Super+arrows move tile to tile, empty ones included. An empty tile you stop on lights up and takes the keyboard: Enter opens the app launcher for it, Escape goes back to your window. Any app you open meanwhile, from the launcher or a key binding, goes there. The window you left shows an inactive border until you move on, and a tile with a window focuses that window, as before.
+- **Arrow keys reach empty tiles.** On a grid layout, Omarchy's Super+arrows move tile to tile, empty ones included. An empty tile you stop on lights up and takes the keyboard: Enter opens the app launcher for it, Escape goes back to your window. Any app you open meanwhile, from the launcher or a key binding, goes there. The window you left shows an inactive border until you move on, and a tile with a window focuses that window, as before.
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
 - **App homes and one-click launch.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right, and one click opens the apps that aren't there yet. See [App homes](#app-homes).
 - **Monitor defaults.** New workspaces on a monitor can start with a layout of your choice, like Smart on an ultrawide.
-- **Swap with the keyboard or mouse.** Omarchy's Super+Shift+arrows swaps the focused window with the one next to it, and Super+drag drops a window onto another tile, trading places with the window there (or moving into an empty tile).
+- **Swap with the keyboard or mouse.** Omarchy's Super+Shift+arrows swaps the focused window with the one in the next tile, or moves it there if that tile is empty, and Super+drag drops a window onto another tile, trading places with the window there (or moving into an empty tile).
 - **Smart layout.** Picks the layout from the number of windows and the monitor's shape:
 
   | Windows | Standard | Ultrawide | Vertical |
@@ -118,13 +118,13 @@ They live in a `presets` list on the Quilt entry in your bar layout in `~/.confi
 - `quilt use Dev` applies a preset by its label, which is handy for key bindings.
 - Add `"builtInPresets": false` to keep only the adaptive layouts (Smart, Dwindle, Scrolling, Monocle) on the Built-in tab.
 - Add `"overflow": "stack"` to stack extra windows in the last tile instead of making them tabs.
-- Add `"navigation": false` to give Super+arrows back to Hyprland's plain focus move.
+- Add `"navigation": false` to give Super+arrows and Super+Shift+arrows back to Hyprland's plain focus move and swap.
 
 ## Settings
 
 The gear tab in the popup holds Quilt's settings:
 
-- **Show built-in layouts**, **Drop areas on empty tiles**, **Super+arrows reach empty tiles** and **Scroll on the bar icon to resize**, each on or off.
+- **Show built-in layouts**, **Drop areas on empty tiles**, **Arrow keys reach empty tiles** and **Scroll on the bar icon to resize**, each on or off.
 - **Extra windows**: as tabs in the last tile, or stacked there.
 - **New workspaces start with**: a default layout for each connected monitor (see [monitor defaults](#your-own-smart-and-monitor-defaults)).
 - **Smart on … monitors**: the layout Smart uses for 1 to 6 windows on monitors shaped like the one you're on.
@@ -157,7 +157,7 @@ In the popup, the arrow keys and Enter pick a layout, and these act right away:
 | `s` | Focused window to the main tile |
 | `x` | Off |
 
-Super+arrows on a grid layout move between tiles, empty ones included (see [Features](#features)). Quilt takes them over only while they are Omarchy's own focus bindings and hands them back when you turn the setting off; if you've bound them to something else, Quilt leaves them alone. Otherwise Quilt doesn't add key bindings of its own. To add some, put lines like these in `~/.config/hypr/bindings.lua`:
+On a grid layout, Super+arrows move between tiles and Super+Shift+arrows move windows between them, empty tiles included (see [Features](#features)). Quilt takes each set over only while it is Omarchy's own and hands it back when you turn the setting off; if you've bound them to something else, Quilt leaves them alone. Otherwise Quilt doesn't add key bindings of its own. To add some, put lines like these in `~/.config/hypr/bindings.lua`:
 
 ```lua
 local quilt = os.getenv("HOME") .. "/.config/omarchy/plugins/ugurcanbulut.quilt/quilt"

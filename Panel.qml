@@ -174,7 +174,7 @@ Panel {
     if (i === settingsTabIndex) return "Settings: what the popup shows, drop areas, scrolling, extra windows, and layouts for new workspaces and Smart."
     if (i === builtInSettingIndex) return "Show Quilt's built-in layouts on the Built-in tab. Off leaves only the adaptive ones."
     if (i === dropAreasIndex) return "Outline empty tiles with a + you can click to open an app there."
-    if (i === navigationIndex) return "Super+arrows stop on empty tiles too; the next app you open goes to the one you stop on. Needs Omarchy's own Super+arrow keys."
+    if (i === navigationIndex) return "Super+arrows stop on empty tiles too, and Super+Shift+arrows move a window into them. Needs Omarchy's own arrow keys."
     if (i === scrollIndex) return "Scroll on the bar icon to widen or narrow the focused window's column."
     if (i === overflowIndex) return "More windows than tiles: Tabs puts the extras in the last tile as tabs, Stack squeezes them in beside its window."
     if (i === backIndex) return "Back to the settings without changing anything."
@@ -1048,7 +1048,7 @@ Panel {
                   model: [
                     { label: "Show built-in layouts", on: root.showBuiltIn, index: root.builtInSettingIndex },
                     { label: "Drop areas on empty tiles", on: root.dropAreasOn, index: root.dropAreasIndex },
-                    { label: "Super+arrows reach empty tiles", on: root.navigationOn, index: root.navigationIndex },
+                    { label: "Arrow keys reach empty tiles", on: root.navigationOn, index: root.navigationIndex },
                     { label: "Scroll on the bar icon to resize", on: root.scrollOn, index: root.scrollIndex }
                   ]
 

@@ -90,21 +90,24 @@ lua() {
   hyprctl repl "$1" 2>&1
 }
 
-# Whether Super+arrows are still Omarchy's four focus bindings, which Quilt
-# may take over; bindings of your own are left alone.
-omarchy_focus_keys() {
-  hyprctl binds -j 2>/dev/null | jq -e '[.[] | select(.modmask == 64 and (.key | test("^(LEFT|RIGHT|UP|DOWN)$")))] as $b
-    | ($b | length) == 4 and all($b[]; (.description // "") | test("^Focus on (left|right|above|below) window$"))' >/dev/null
+# Whether four arrow bindings (Super: 64, Super+Shift: 65) are still
+# Omarchy's, going by their descriptions; Quilt may take those over, and
+# leaves bindings of your own alone.
+omarchy_arrows() {
+  hyprctl binds -j 2>/dev/null | jq -e --argjson mod "$1" --arg desc "$2" '
+    [.[] | select(.modmask == $mod and (.key | test("^(LEFT|RIGHT|UP|DOWN)$")))] as $b
+    | ($b | length) == 4 and all($b[]; (.description // "") | test($desc))' >/dev/null
 }
 
 # Your Smart layouts and monitor defaults from the widget's settings, as a Lua
 # table for the engine. A monitor default can be a spec or one of your
-# presets by label, with its gaps and apps. Arrow-key navigation is on unless
-# you turned it off, and only while Super+arrows are Omarchy's own.
+# presets by label, with its gaps and apps. The arrow keys work tile by tile
+# unless you turned that off, each set only while it is Omarchy's own.
 config_lua() {
-  local keys=false
-  omarchy_focus_keys && keys=true
-  jq -r --argjson keys "$keys" '
+  local focus=false swap=false
+  omarchy_arrows 64 '^Focus on (left|right|above|below) window$' && focus=true
+  omarchy_arrows 65 '^Swap window (to the left|to the right|up|down)$' && swap=true
+  jq -r --argjson focus "$focus" --argjson swap "$swap" '
     def lua:
       if type == "object" then "{" + ([to_entries[] | "[\(.key | if test("^[0-9]+$") then . else @json end)]=\(.value | lua)"] | join(",")) + "}"
       elif type == "array" then "{" + ([to_entries[] | "[\(.key + 1)]=\(.value | lua)"] | join(",")) + "}"
@@ -114,7 +117,8 @@ config_lua() {
     [.presets[]? | if type == "string" then { spec: . } else . end | select(.spec | type == "string")] as $presets
     | def preset($name): first($presets[] | select((.label // "" | ascii_downcase) == ($name | ascii_downcase))) // { spec: $name };
     { overflow: (if .overflow == "stack" then "stack" else "tabs" end),
-      navigation: ((.navigation != false) and $keys),
+      navigation: ((.navigation != false) and $focus),
+      swapping: ((.navigation != false) and $swap),
       smart: (.smart // {} | if type == "object" then . else {} end),
       monitors: (.monitors // {} | if type == "object" then . else {} end | with_entries(.value |= (
         (if type == "string" then preset(.) elif type == "object" then . else {} end)
