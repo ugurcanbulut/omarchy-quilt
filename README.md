@@ -38,6 +38,8 @@ The popup has 25 built-in layouts in four groups (columns, main + stack, grids a
 - **Windows keep their tiles.** Close a window and its tile stays empty instead of the others shifting around. The next window you open fills it.
 - **Drop areas.** Empty tiles show an outline with a "+". Click one to open the app launcher; the app you pick opens in that tile.
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
+- **App homes.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right. See [App homes](#app-homes).
+- **Swap with the keyboard.** Omarchy's Super+Shift+arrows swaps the focused window with the one next to it, tiles and all.
 - **Smart layout.** Picks the layout from the number of windows and the monitor's shape:
 
   | Windows | Standard | Ultrawide | Vertical |
@@ -65,6 +67,15 @@ Ctrl+Z undoes the last change. The toolbar can be dragged by its title if it cov
 
 ![The editor over the same workspace: each tile labeled with its number, app and size, and the toolbar at the bottom](docs/editor-v0.1.1.png)
 
+## App homes
+
+Give a tile an app and that app opens there, whatever else is on the workspace:
+
+- In the editor, turn on **Remember apps** before **Save as preset** or **Done**. Each tile keeps the app that's in it now.
+- Or run `quilt home` on the focused window to make its tile that app's home (`quilt home 3` for tile 3; `quilt home 3 none` clears it).
+
+A new window goes to its app's home if it's free. If something else sits there, that window steps aside to a free tile (or shares the overflow tile when none is free). Other windows fill the free tiles first and use an empty home only when nothing else is left, so the tile is still free when its app opens. Switching to a preset with homes also moves the windows already on the workspace into them. Apps are matched by their window class, which the editor shows on each tile.
+
 ## Install
 
 ```bash
@@ -88,11 +99,12 @@ They live in a `presets` list on the Quilt entry in your bar layout in `~/.confi
   "presets": [
     "5|7",
     { "spec": "2|8|2", "label": "Focus", "gapsOut": 40 },
-    { "spec": "3|6|3:3", "label": "Center + three", "gapsIn": 2 }
+    { "spec": "3|6|3", "label": "Dev", "apps": { "1": "obsidian", "2": "chromium", "3": "alacritty" } }
   ] }
 ```
 
-- A preset is a spec string, or an object with `spec` and optional `label`, `gapsIn` and `gapsOut` (in pixels) for that layout.
+- A preset is a spec string, or an object with `spec` and optional `label`, `gapsIn` and `gapsOut` (in pixels), and `apps` (tile number to window class, see [App homes](#app-homes)).
+- `quilt use Dev` applies a preset by its label, which is handy for key bindings.
 - Add `"builtInPresets": false` to show only your own layouts plus the adaptive ones.
 
 ## Keys
@@ -117,6 +129,7 @@ o.bind("SUPER + CTRL + ALT + EQUAL", "Widen column", quilt .. " grow")
 o.bind("SUPER + CTRL + ALT + MINUS", "Narrow column", quilt .. " shrink")
 o.bind("SUPER + CTRL + ALT + RETURN", "Window to main tile", quilt .. " main")
 o.bind("SUPER + CTRL + ALT + E", "Edit layout", quilt .. " edit")
+o.bind("SUPER + CTRL + ALT + H", "Make this tile the app's home", quilt .. " home")
 o.bind("SUPER + CTRL + ALT + 1", "Window to tile 1", quilt .. " move 1")
 ```
 
@@ -126,6 +139,7 @@ Check `omarchy menu keybindings --print` first for chords you already use.
 
 ```bash
 quilt set <spec>        # 4|8, 3|6|3:2, 4:8/4|8, @12x12:..., smart, dwindle, scrolling, monocle, off
+quilt use <name>        # one of your presets, by label or spec, with its gaps and apps
 quilt next | prev       # cycle through the layouts
 quilt grow | shrink     # widen or narrow the focused window's column
 quilt mirror            # flip the layout left to right
@@ -133,6 +147,8 @@ quilt main              # swap the focused window into the main tile
 quilt move <n|empty>    # move the focused window to tile n, or the first empty tile
 quilt swap <a> <b>      # swap the windows in tiles a and b
 quilt target <n>        # open the app launcher; the new app goes to tile n
+quilt home [n] [app]    # make tile n home to an app (default: the focused window's); "none" clears it
+quilt homes [json]      # print or replace the workspace's app homes, like {"2":"chromium"}
 quilt edit | new        # open the editor
 quilt status            # the active workspace's layout, as JSON
 quilt area              # the area its tiles share, as JSON
