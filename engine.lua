@@ -1268,7 +1268,9 @@ function Q.navigate(dir)
     s.pending, s.pending_at, s.pending_nav = nil, nil, nil
     hl.dispatch(hl.dsp.focus({ window = "address:" .. owner.address }))
   else
-    s.pending, s.pending_at, s.pending_nav = to, nil, true
+    -- Remembers the window that keeps the focus meanwhile: focus coming back
+    -- to it (say, when a launcher closes) leaves the selection be.
+    s.pending, s.pending_at, s.pending_nav = to, nil, w and tostring(w.stable_id) or true
   end
   Q.save()
   Q.refresh(key)
@@ -1394,13 +1396,13 @@ function Q.load()
       Q.dirty = true
     end),
     hl.on("window.open", function(w) claim(w) end),
-    -- A window with a tile getting focus ends an arrow-key selection (a new
-    -- window has no tile yet, so its arrival doesn't).
+    -- Focus moving to another window with a tile ends an arrow-key selection
+    -- (a new window has no tile yet, so its arrival doesn't).
     hl.on("window.active", function(w)
       if not w or not w.workspace then return end
-      local key = ws_key(w.workspace)
+      local key, id = ws_key(w.workspace), tostring(w.stable_id)
       local s = Q.state.workspaces[key]
-      if s and s.pending_nav and s.assign[tostring(w.stable_id)] then
+      if s and s.pending_nav and s.pending_nav ~= id and s.assign[id] then
         s.pending, s.pending_at, s.pending_nav = nil, nil, nil
         Q.save()
         Q.refresh(key)
