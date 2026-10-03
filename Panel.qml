@@ -28,16 +28,64 @@ Panel {
   // Specs per workspace, from the engine.
   property var summary: ({})
 
-  // The popup's two tabs: Quilt's own presets, and yours.
+  // The popup's tabs: Quilt's own presets, yours, and settings.
   property string tab: "builtin"
   property var builtInList: []
   property var yoursList: []
   readonly property var sections: tab === "yours"
     ? (yoursList.length ? [{ title: "", presets: yoursList }] : [])
-    : builtInList
-  // Cursor positions of the tab buttons (presets and actions count from 0).
+    : tab === "settings" ? (picking ? pickerSections : []) : builtInList
+  // Cursor positions that aren't presets or actions (those count from 0).
   readonly property int builtInTabIndex: -2
   readonly property int yoursTabIndex: -3
+  readonly property int settingsTabIndex: -4
+  readonly property int backIndex: -5
+  readonly property int builtInSettingIndex: -10
+  readonly property int dropAreasIndex: -11
+  readonly property int scrollIndex: -12
+  readonly property int overflowIndex: -13
+  function monitorIndex(i) { return -20 - i }
+  function smartIndex(count) { return -30 - count }
+
+  // Settings, with their defaults.
+  readonly property bool showBuiltIn: setting("builtInPresets", true) !== false
+  readonly property bool dropAreasOn: setting("dropAreas", true) !== false
+  readonly property bool scrollOn: setting("scrollResize", true) !== false
+  readonly property string overflowMode: setting("overflow", "tabs") === "stack" ? "stack" : "tabs"
+
+  // Connected monitors, for their default layouts.
+  readonly property var monitors: Hyprland.monitors.values.map(function(m) {
+    return { name: m.name, label: m.name + " · " + m.width + "×" + m.height, shape: shapeOf(m) }
+  })
+
+  // A layout picker over the settings: { kind: "monitor", name } or
+  // { kind: "smart", shape, count }.
+  property var picking: null
+  readonly property string pickingValue: !picking ? ""
+    : picking.kind === "monitor" ? monitorDefault(picking.name) : (smartChoice(picking.shape, picking.count) || "")
+  readonly property var pickerSections: {
+    if (!picking) return []
+    var first
+    if (picking.kind === "monitor") {
+      first = [{ spec: "none", caption: "None", icon: 0xF073A, value: "", hint: "New workspaces on " + picking.name + " keep Omarchy's layout." }]
+        .concat(["smart", "dwindle", "scrolling", "monocle"].map(function(spec) { return { spec: spec, value: spec } }))
+    } else {
+      var standard = Layout.smartSpec(picking.shape, picking.count, null)
+      first = [{ spec: standard, caption: "Default", value: "", hint: "Quilt's own choice for " + picking.count + (picking.count === 1 ? " window: " : " windows: ") + standard + "." }]
+    }
+    var out = [{ title: "", presets: first }]
+    builtInSections.forEach(function(section) {
+      if (section.title === "ADAPTIVE") return
+      out.push({ title: section.title, presets: section.presets.map(function(p) { return { spec: p.spec, label: p.label, value: p.spec } }) })
+    })
+    // Yours by label for a monitor (it brings its gaps and apps), by spec for Smart.
+    var mine = yoursList.map(function(p) {
+      var named = p.label && p.label !== p.spec
+      return { spec: p.spec, label: p.label, caption: named ? p.label : p.spec, value: picking.kind === "monitor" && named ? p.label : p.spec }
+    })
+    if (mine.length) out.push({ title: "YOURS", presets: mine })
+    return out
+  }
 
   // Scroll deltas not yet worth a whole step (touchpads send many small ones).
   property real wheelAccumulator: 0
@@ -74,7 +122,13 @@ Panel {
   // The popup's rows as the arrow keys see them: the tabs, four presets to a
   // row in each section, then Edit | New, then Mirror | To main | Off.
   readonly property var navRows: {
-    var rows = [{ items: [builtInTabIndex, yoursTabIndex], columns: 2 }], start = 0
+    var rows = [{ items: [builtInTabIndex, yoursTabIndex, settingsTabIndex], columns: 3 }], start = 0
+    if (tab === "settings" && !picking) {
+      [builtInSettingIndex, dropAreasIndex, scrollIndex, overflowIndex].forEach(function(i) { rows.push({ items: [i], columns: 1 }) })
+      monitors.forEach(function(m, i) { rows.push({ items: [monitorIndex(i)], columns: 1 }) })
+      for (var n = 1; n <= 6; n++) rows.push({ items: [smartIndex(n)], columns: 1 })
+    }
+    if (tab === "settings" && picking) rows.push({ items: [backIndex], columns: 1 })
     sections.forEach(function(section) {
       for (var i = 0; i < section.presets.length; i += 4) {
         var items = []
@@ -98,7 +152,17 @@ Panel {
     if (i === yoursTabIndex) return yoursList.length
       ? "Layouts you saved from the editor or added to shell.json."
       : "Layouts you save from the editor show up here."
-    if (i >= 0 && i < flatPresets.length) return describe(flatPresets[i])
+    if (i === settingsTabIndex) return "Settings: what the popup shows, drop areas, scrolling, extra windows, and layouts for new workspaces and Smart."
+    if (i === builtInSettingIndex) return "Show Quilt's built-in layouts on the Built-in tab. Off leaves only the adaptive ones."
+    if (i === dropAreasIndex) return "Outline empty tiles with a + you can click to open an app there."
+    if (i === scrollIndex) return "Scroll on the bar icon to widen or narrow the focused window's column."
+    if (i === overflowIndex) return "More windows than tiles: Tabs puts the extras in the last tile as tabs, Stack squeezes them in beside its window."
+    if (i === backIndex) return "Back to the settings without changing anything."
+    for (var m = 0; m < monitors.length; m++)
+      if (i === monitorIndex(m)) return "New workspaces on " + monitors[m].name + " start with this layout, until you pick one there yourself."
+    for (var n = 1; n <= 6; n++)
+      if (i === smartIndex(n)) return "The layout Smart uses for " + n + (n === 1 ? " window" : " windows") + " on " + currentShape + " monitors. Default is Quilt's own choice."
+    if (i >= 0 && i < flatPresets.length) return flatPresets[i].hint || describe(flatPresets[i])
     if (i === editIndex) return canEdit
       ? "Edit this workspace's layout on screen: drag lines to resize, split, remove or swap tiles, then save it as a preset."
       : "Pick a grid layout for this workspace first, then edit it on screen."
@@ -124,8 +188,7 @@ Panel {
 
   function load() { if (!loadProc.running) loadProc.running = true }
 
-  function monitorShape() {
-    var m = Hyprland.focusedMonitor
+  function shapeOf(m) {
     if (!m) return "standard"
     var w = m.width, h = m.height
     // Hyprland reports the mode size; odd transforms turn it a quarter.
@@ -135,10 +198,86 @@ Panel {
     return w / h >= 2 ? "ultrawide" : "standard"
   }
 
-  function smartSpec(count) {
-    var shape = monitorShape()
+  function monitorShape() { return shapeOf(Hyprland.focusedMonitor) }
+  readonly property string currentShape: monitorShape()
+
+  // Your Smart layouts for a monitor shape, by window count.
+  function smartList(shape) {
     var mine = setting("smart", {})
-    return Layout.smartSpec(shape, count, mine && mine[shape] ? toArray(mine[shape]) : null)
+    return mine && mine[shape] ? toArray(mine[shape]) : []
+  }
+
+  // Your Smart layout for this many windows, if you set a usable one.
+  function smartChoice(shape, count) {
+    var spec = smartList(shape)[count - 1]
+    return typeof spec === "string" && Layout.parse(spec) ? spec.replace(/\s/g, "") : ""
+  }
+
+  function smartSpec(count) { return Layout.smartSpec(monitorShape(), count, smartList(monitorShape())) }
+
+  function monitorDefault(name) {
+    var all = setting("monitors", {})
+    var value = all ? all[name] : ""
+    return typeof value === "string" ? value : ""
+  }
+
+  // A monitor default names a spec, a Hyprland layout or one of your
+  // presets by label; this is the spec to draw.
+  function specFor(value) {
+    var mine = yoursList.filter(function(p) { return p.label === value })[0]
+    return mine ? mine.spec : value
+  }
+
+  // Settings are written only when they differ from the default.
+  function saveSetting(name, value, fallback) {
+    var change = {}
+    change[name] = value === fallback ? undefined : value
+    saveSettings(change)
+  }
+
+  function setMonitorDefault(name, value) {
+    var all = Object.assign({}, setting("monitors", {}) || {})
+    if (value) all[name] = value
+    else delete all[name]
+    saveSettings({ monitors: Object.keys(all).length ? all : undefined })
+  }
+
+  function setSmart(shape, count, spec) {
+    var stored = setting("smart", {}) || {}
+    var all = {}
+    Object.keys(stored).forEach(function(key) { all[key] = toArray(stored[key]) })
+    var list = (all[shape] || []).slice()
+    while (list.length < count) list.push(null)
+    list[count - 1] = spec || null
+    while (list.length && !list[list.length - 1]) list.pop()
+    if (list.length) all[shape] = list
+    else delete all[shape]
+    saveSettings({ smart: Object.keys(all).length ? all : undefined })
+  }
+
+  // A choice from the layout picker.
+  function choose(item) {
+    if (!picking) return
+    if (picking.kind === "monitor") setMonitorDefault(picking.name, item.value)
+    else setSmart(picking.shape, picking.count, item.value)
+    closePicker()
+  }
+
+  function openPicker(what) {
+    picking = what
+    cursorIndex = backIndex
+  }
+
+  function closePicker() {
+    var was = picking
+    picking = null
+    if (!was) return
+    if (was.kind === "monitor") {
+      var i = monitors.map(function(m) { return m.name }).indexOf(was.name)
+      cursorIndex = i >= 0 ? monitorIndex(i) : builtInSettingIndex
+    } else {
+      cursorIndex = smartIndex(was.count)
+    }
   }
 
   // What a preset button draws: the spec itself, or for Smart the spec it
@@ -264,12 +403,22 @@ Panel {
 
   function setTab(name) {
     tab = name
+    picking = null
     pendingDelete = -1
   }
 
   function activate(index) {
     if (index === builtInTabIndex) setTab("builtin")
     else if (index === yoursTabIndex) setTab("yours")
+    else if (index === settingsTabIndex) setTab("settings")
+    else if (index === backIndex) closePicker()
+    else if (index === builtInSettingIndex) saveSetting("builtInPresets", !showBuiltIn, true)
+    else if (index === dropAreasIndex) saveSetting("dropAreas", !dropAreasOn, true)
+    else if (index === scrollIndex) saveSetting("scrollResize", !scrollOn, true)
+    else if (index === overflowIndex) saveSetting("overflow", overflowMode === "tabs" ? "stack" : "tabs", "tabs")
+    else if (index <= monitorIndex(0) && index > monitorIndex(monitors.length)) openPicker({ kind: "monitor", name: monitors[monitorIndex(0) - index].name })
+    else if (index <= smartIndex(1) && index >= smartIndex(6)) openPicker({ kind: "smart", shape: currentShape, count: smartIndex(0) - index })
+    else if (picking && index >= 0 && index < flatPresets.length) choose(flatPresets[index])
     else if (index >= 0 && index < flatPresets.length) applyPreset(flatPresets[index])
     else if (index === editIndex) { if (canEdit) startEdit() }
     else if (index === newIndex) startNew()
@@ -330,6 +479,7 @@ Panel {
 
   onOpenedChanged: {
     pendingDelete = -1
+    picking = null
     if (!opened) return
     // Open on the tab that holds the current layout.
     if (yoursList.some(isCurrent)) tab = "yours"
@@ -411,11 +561,14 @@ Panel {
   implicitHeight: button.implicitHeight
 
   // Preset sections in a 4-wide grid; each tab has one. Only the shown tab
-  // (`active`) takes the cursor and clicks.
+  // (`active`) takes the cursor and clicks. With `pick` set it's a picker:
+  // a click hands the item to pick(), and `chosen` marks the current value.
   component PresetSections: Column {
     id: presetSections
     property var model: []
     property bool active: false
+    property var pick: null
+    property string chosen: ""
 
     spacing: Style.space(10)
     opacity: active ? 1 : 0
@@ -460,20 +613,21 @@ Panel {
               required property var modelData
               required property int index
               readonly property int flatIndex: sectionColumn.offset + index
-              readonly property bool builtIn: root.builtInLayouts[modelData.spec] !== undefined
+              readonly property int icon: modelData.icon || root.builtInLayouts[modelData.spec] || 0
+              readonly property bool builtIn: icon !== 0
 
               width: presetGrid.cellWidth
               height: Style.space(62)
               bordered: true
-              selected: root.isCurrent(modelData)
+              selected: presetSections.pick ? modelData.value === presetSections.chosen : root.isCurrent(modelData)
               tooltipText: modelData.label || modelData.spec
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               hasCursor: presetSections.active && root.cursorIndex === flatIndex
-              onClicked: root.applyPreset(modelData)
+              onClicked: presetSections.pick ? presetSections.pick(modelData) : root.applyPreset(modelData)
               // Your own presets: right-click twice to remove.
               onRightClicked: {
-                if (!modelData.custom) return
+                if (presetSections.pick || !modelData.custom) return
                 root.cursorIndex = flatIndex
                 if (root.pendingDelete === modelData.customIndex) root.removePreset(modelData.customIndex)
                 else root.pendingDelete = modelData.customIndex
@@ -488,13 +642,13 @@ Panel {
                 width: parent.width - Style.space(18)
                 height: Style.space(28)
                 spec: root.previewSpec(presetButton.modelData.spec)
-                windows: root.activeWindows
+                windows: presetSections.pick ? -1 : root.activeWindows
                 color: root.bar.foreground
               }
 
               // Presets with app homes: apply and open their apps.
               Text {
-                visible: root.hasApps(presetButton.modelData)
+                visible: !presetSections.pick && root.hasApps(presetButton.modelData)
                 anchors.top: parent.top
                 anchors.right: parent.right
                 anchors.margins: Style.space(4)
@@ -521,7 +675,7 @@ Panel {
                 x: (parent.width - width) / 2
                 y: Style.space(6)
                 textFormat: Text.PlainText
-                text: root.glyph(root.builtInLayouts[presetButton.modelData.spec] || 0xF0574)
+                text: root.glyph(presetButton.icon || 0xF0574)
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.space(26)
@@ -537,7 +691,8 @@ Panel {
                 minimumPixelSize: 7
                 textFormat: Text.PlainText
                 readonly property bool removing: presetButton.modelData.custom === true && root.pendingDelete === presetButton.modelData.customIndex
-                text: removing ? "Remove?" : (presetButton.modelData.custom === true && presetButton.modelData.label !== presetButton.modelData.spec ? presetButton.modelData.label : presetButton.modelData.spec)
+                text: removing ? "Remove?" : presetButton.modelData.caption
+                  || (presetButton.modelData.custom === true && presetButton.modelData.label !== presetButton.modelData.spec ? presetButton.modelData.label : presetButton.modelData.spec)
                 color: removing ? Color.urgent : root.bar.foreground
                 opacity: removing ? 1 : 0.7
                 font.family: root.bar.fontFamily
@@ -546,6 +701,75 @@ Panel {
             }
           }
         }
+      }
+    }
+  }
+
+  // A settings row whose value is a layout: its name on the left, a picture
+  // and name of the layout on the right; a click opens the picker.
+  component ChoiceRow: Button {
+    id: choiceRow
+    property string title: ""
+    property string value: ""
+    property string caption: ""
+    property string spec: ""
+    property int cursorIdx: 0
+    readonly property int icon: spec === "" ? 0xF073A : (root.builtInLayouts[spec] || 0)
+
+    height: Style.space(40)
+    leftAlign: true
+    text: title
+    bordered: true
+    foreground: root.bar.foreground
+    fontFamily: root.bar.fontFamily
+    hasCursor: root.cursorIndex === cursorIdx
+    onClicked: root.activate(cursorIdx)
+    onHovered: function(h) { if (h) root.cursorIndex = choiceRow.cursorIdx }
+    onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+
+    Row {
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(8)
+
+      Thumb {
+        visible: choiceRow.icon === 0
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(36)
+        height: Style.space(18)
+        spec: root.previewSpec(choiceRow.spec)
+        color: root.bar.foreground
+      }
+
+      Text {
+        visible: choiceRow.icon !== 0
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: root.glyph(choiceRow.icon)
+        color: root.bar.foreground
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: choiceRow.caption
+        color: root.bar.foreground
+        opacity: 0.7
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: root.glyph(0xF0142) // md-chevron-right
+        color: root.bar.foreground
+        opacity: 0.5
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.body
       }
     }
   }
@@ -589,14 +813,14 @@ Panel {
     text: grid ? "" : root.glyph(root.builtInLayouts[root.activeSpec] || 0xF0574)
     iconComponent: grid ? miniQuilt : null
     tooltipText: "Quilt · " + (root.activeSpec || "Omarchy default") + (root.activeSpec === "smart" && root.activeTiles ? " (" + root.activeTiles.spec + ")" : "")
-      + (root.resizable ? "\nScroll to resize · right-click for the next preset" : "\nRight-click for the next preset")
+      + (root.resizable && root.scrollOn ? "\nScroll to resize · right-click for the next preset" : "\nRight-click for the next preset")
     onPressed: function(b) {
       if (b === Qt.RightButton) root.run(["next"])
       else root.toggle()
     }
     // One notch is one column; a touchpad swipe adds up to whole notches.
     onWheelMoved: function(delta) {
-      if (!root.resizable) return
+      if (!root.resizable || !root.scrollOn) return
       var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
       root.wheelAccumulator = wheel.remainder
       for (var i = 0; i < Math.abs(wheel.steps); i++) root.run([wheel.steps > 0 ? "grow" : "shrink"])
@@ -694,18 +918,23 @@ Panel {
             width: parent.width
             spacing: Style.space(6)
 
-            readonly property real cellWidth: (width - spacing) / 2
+            // The gear is a square; the two named tabs share the rest.
+            readonly property real gearWidth: Style.space(40)
+            readonly property real cellWidth: (width - gearWidth - spacing * 2) / 2
 
             Repeater {
               model: [
                 { name: "builtin", label: "Built-in", index: root.builtInTabIndex },
-                { name: "yours", label: "Yours", index: root.yoursTabIndex }
+                { name: "yours", label: "Yours", index: root.yoursTabIndex },
+                { name: "settings", icon: 0xF0493, index: root.settingsTabIndex } // md-cog
               ]
 
               Button {
                 required property var modelData
-                width: tabRow.cellWidth
-                text: modelData.label + (modelData.name === "yours" && root.yoursList.length ? " · " + root.yoursList.length : "")
+                width: modelData.icon ? tabRow.gearWidth : tabRow.cellWidth
+                text: modelData.icon ? "" : modelData.label + (modelData.name === "yours" && root.yoursList.length ? " · " + root.yoursList.length : "")
+                iconText: modelData.icon ? root.glyph(modelData.icon) : ""
+                tooltipText: modelData.icon ? "Settings" : ""
                 bordered: true
                 selected: root.tab === modelData.name
                 foreground: root.bar.foreground
@@ -720,7 +949,7 @@ Panel {
 
           Item {
             width: parent.width
-            implicitHeight: Math.max(builtInTab.implicitHeight, yoursTab.implicitHeight)
+            implicitHeight: Math.max(builtInTab.implicitHeight, yoursTab.implicitHeight, settingsTab.implicitHeight)
 
             PresetSections {
               id: builtInTab
@@ -754,6 +983,176 @@ Panel {
                 opacity: 0.6
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.bodySmall
+              }
+            }
+
+            Column {
+              id: settingsTab
+              width: parent.width
+              spacing: Style.space(6)
+              opacity: root.tab === "settings" ? 1 : 0
+              enabled: root.tab === "settings"
+
+              // The settings list.
+              Column {
+                visible: !root.picking
+                width: parent.width
+                spacing: Style.space(6)
+
+                PanelSectionHeader {
+                  text: "GENERAL"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                }
+
+                Repeater {
+                  model: [
+                    { label: "Show built-in layouts", on: root.showBuiltIn, index: root.builtInSettingIndex },
+                    { label: "Drop areas on empty tiles", on: root.dropAreasOn, index: root.dropAreasIndex },
+                    { label: "Scroll on the bar icon to resize", on: root.scrollOn, index: root.scrollIndex }
+                  ]
+
+                  Toggle {
+                    required property var modelData
+                    width: parent.width
+                    label: modelData.label
+                    checked: modelData.on
+                    titleSize: Style.font.body
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    hasCursor: root.cursorIndex === modelData.index
+                    onClicked: root.activate(modelData.index)
+                    onHovered: function(h) { if (h) root.cursorIndex = modelData.index }
+                    onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+                  }
+                }
+
+                // Extra windows: Tabs | Stack.
+                Item {
+                  id: overflowRow
+                  width: parent.width
+                  height: Math.max(overflowLabel.implicitHeight, overflowChoice.implicitHeight)
+                  readonly property bool hasCursor: root.cursorIndex === root.overflowIndex
+                  onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+
+                  Text {
+                    id: overflowLabel
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(8)
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: "Extra windows"
+                    color: root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
+
+                  ButtonGroup {
+                    id: overflowChoice
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    focusable: false
+                    options: [{ value: "tabs", label: "Tabs" }, { value: "stack", label: "Stack" }]
+                    value: root.overflowMode
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    cursorIndex: overflowRow.hasCursor ? (root.overflowMode === "tabs" ? 1 : 0) : -1
+                    onChanged: function(value) { root.saveSetting("overflow", value, "tabs") }
+                    onHovered: function(index, h) { if (h) root.cursorIndex = root.overflowIndex }
+                  }
+                }
+
+                PanelSectionHeader {
+                  text: "NEW WORKSPACES START WITH"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                }
+
+                Repeater {
+                  model: root.monitors
+
+                  ChoiceRow {
+                    required property var modelData
+                    required property int index
+                    width: parent.width
+                    title: modelData.label
+                    value: root.monitorDefault(modelData.name)
+                    caption: value === "" ? "None" : value
+                    spec: root.specFor(value)
+                    cursorIdx: root.monitorIndex(index)
+                  }
+                }
+
+                PanelSectionHeader {
+                  text: "SMART ON " + root.currentShape.toUpperCase() + " MONITORS"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                }
+
+                Repeater {
+                  model: 6
+
+                  ChoiceRow {
+                    required property int index
+                    readonly property int count: index + 1
+                    readonly property string mine: root.smartChoice(root.currentShape, count)
+                    width: parent.width
+                    title: count + (count === 1 ? " window" : " windows")
+                    value: mine
+                    caption: mine || "Default"
+                    spec: mine || Layout.smartSpec(root.currentShape, count, null)
+                    cursorIdx: root.smartIndex(count)
+                  }
+                }
+              }
+
+              // The layout picker.
+              Column {
+                visible: root.picking !== null
+                width: parent.width
+                spacing: Style.space(10)
+
+                Item {
+                  width: parent.width
+                  height: backButton.implicitHeight
+
+                  Button {
+                    id: backButton
+                    anchors.left: parent.left
+                    iconText: root.glyph(0xF004D) // md-arrow-left
+                    text: "Back"
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    hasCursor: root.cursorIndex === root.backIndex
+                    onClicked: root.closePicker()
+                    onHovered: function(h) { if (h) root.cursorIndex = root.backIndex }
+                    onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+                  }
+
+                  Text {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - backButton.width - Style.space(12)
+                    horizontalAlignment: Text.AlignRight
+                    elide: Text.ElideRight
+                    textFormat: Text.PlainText
+                    text: !root.picking ? ""
+                      : root.picking.kind === "monitor" ? "New workspaces on " + root.picking.name
+                      : "Smart · " + root.picking.count + (root.picking.count === 1 ? " window" : " windows")
+                    color: root.bar.foreground
+                    opacity: 0.7
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+
+                PresetSections {
+                  width: parent.width
+                  model: root.pickerSections
+                  active: root.tab === "settings" && root.picking !== null
+                  pick: root.choose
+                  chosen: root.pickingValue
+                }
               }
             }
           }
@@ -895,7 +1294,7 @@ Panel {
 
     screen: barWindow ? barWindow.screen : null
     // The editor draws its own tiles.
-    visible: emptyTiles.length > 0 && monitor !== null && editor.mode === ""
+    visible: emptyTiles.length > 0 && monitor !== null && editor.mode === "" && root.dropAreasOn
     color: "transparent"
     anchors { top: true; bottom: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore

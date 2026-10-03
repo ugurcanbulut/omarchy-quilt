@@ -102,6 +102,17 @@ omarchy bar move ugurcanbulut.quilt --section right --index 0
 
 Layouts saved from the editor show up on the popup's **Yours** tab and in the next/previous cycle. Right-click one twice to remove it.
 
+## Settings
+
+The gear tab in the popup holds Quilt's settings:
+
+- **Show built-in layouts**, **Drop areas on empty tiles** and **Scroll on the bar icon to resize**, each on or off.
+- **Extra windows**: as tabs in the last tile, or stacked there.
+- **New workspaces start with**: a default layout for each connected monitor (see [monitor defaults](#your-own-smart-and-monitor-defaults)).
+- **Smart on … monitors**: the layout Smart uses for 1 to 6 windows on monitors shaped like the one you're on.
+
+Choosing a layout opens a picker of the same pictures as the other tabs. Everything is saved to the Quilt entry in `~/.config/omarchy/shell.json`, which you can also edit by hand.
+
 They live in a `presets` list on the Quilt entry in your bar layout in `~/.config/omarchy/shell.json`, where you can also add them by hand:
 
 ```json

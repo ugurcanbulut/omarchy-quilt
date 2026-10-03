@@ -18,15 +18,43 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "builtInPresets": true
+      "builtInPresets": true,
+      "dropAreas": true,
+      "scrollResize": true,
+      "overflow": "tabs"
     },
     "schema": [
       {
         "key": "builtInPresets",
         "type": "boolean",
-        "label": "Show built-in presets",
+        "label": "Show built-in layouts",
         "description": "Turn off to keep only the adaptive layouts (Smart, Dwindle, Scrolling, Monocle) on the Built-in tab.",
         "defaultValue": true
+      },
+      {
+        "key": "dropAreas",
+        "type": "boolean",
+        "label": "Drop areas on empty tiles",
+        "description": "Outline empty tiles with a + you can click to open an app there.",
+        "defaultValue": true
+      },
+      {
+        "key": "scrollResize",
+        "type": "boolean",
+        "label": "Scroll on the bar icon to resize",
+        "description": "Scrolling on the bar icon widens or narrows the focused window's column.",
+        "defaultValue": true
+      },
+      {
+        "key": "overflow",
+        "type": "enum",
+        "label": "Extra windows",
+        "options": [
+          "tabs",
+          "stack"
+        ],
+        "description": "With more windows than tiles: tabs puts the extras in the last tile as tabs, stack squeezes them in beside its window.",
+        "defaultValue": "tabs"
       }
     ]
   }
