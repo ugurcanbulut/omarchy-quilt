@@ -20,8 +20,16 @@ quilt = quilt or {}
 local Q = quilt
 
 local HOME = os.getenv("HOME") or ""
-Q.state_dir = (os.getenv("XDG_STATE_HOME") or (HOME .. "/.local/state")) .. "/quilt"
+local STATE_HOME = os.getenv("XDG_STATE_HOME") or (HOME .. "/.local/state")
+Q.state_dir = STATE_HOME .. "/quilt"
 Q.runtime_dir = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/quilt"
+
+-- Drawn grids can be this fine: the editor refines a 10- or 12-row grid up to
+-- 12 times so uneven rows (like "12:5") keep their edges on grid lines.
+local MAX_GRID = 144
+
+-- How long a tile picked from a drop area waits for its app, in seconds.
+local PENDING_SECONDS = 60
 
 -- Smart specs by window count, per monitor shape. Past the end of a list the
 -- layout becomes an even grid.
@@ -123,13 +131,14 @@ end
 -- ":3" -> three equal heights; ":8/4" -> heights on a 10- or 12-row grid.
 local function parse_rows(text)
   if text == "" then return { 1 }, 1 end
-  if not text:find("/") then
+  if text:match("^%d+$") then
     local n = tonumber(text)
-    if not n or n < 1 or n > 8 then return nil end
+    if n < 1 or n > 8 then return nil end
     local rows = {}
     for i = 1, n do rows[i] = 1 end
     return rows, n
   end
+  if not text:match("^%d[%d/]*%d$") or text:find("//", 1, true) then return nil end
   local rows, total = {}, 0
   for part in text:gmatch("[^/]+") do
     local size = tonumber(part)
@@ -151,11 +160,17 @@ function Q.parse(spec)
   local gw, gh, list = spec:match("^@(%d+)x(%d+):(.+)$")
   if gw then
     gw, gh = tonumber(gw), tonumber(gh)
-    if gw < 1 or gh < 1 or gw > 48 or gh > 48 then return nil end
+    if gw < 1 or gh < 1 or gw > MAX_GRID or gh > MAX_GRID then return nil end
+    local rects = {}
     for rect in list:gmatch("[^;]+") do
       local x, y, w, h = rect:match("^(%d+),(%d+),(%d+),(%d+)$")
       x, y, w, h = tonumber(x), tonumber(y), tonumber(w), tonumber(h)
       if not x or w < 1 or h < 1 or x + w > gw or y + h > gh then return nil end
+      -- Overlapping tiles would stack windows on top of each other.
+      for _, r in ipairs(rects) do
+        if math.min(x + w, r.x + r.w) > math.max(x, r.x) and math.min(y + h, r.y + r.h) > math.max(y, r.y) then return nil end
+      end
+      rects[#rects + 1] = { x = x, y = y, w = w, h = h }
       tiles[#tiles + 1] = { x = x / gw, y = y / gh, w = w / gw, h = h / gh }
     end
     if #tiles == 0 then return nil end
@@ -167,13 +182,14 @@ function Q.parse(spec)
   end
 
   local cols, total = {}, 0
-  for part in spec:gmatch("[^|]+") do
-    local span, rows = part:match("^(%d+):?([%d/]*)$")
+  for part in (spec .. "|"):gmatch("([^|]*)|") do
+    local span, rows = part:match("^(%d+)$"), ""
+    if not span then span, rows = part:match("^(%d+):([%d/]+)$") end
     span = tonumber(span)
     if not span or span < 1 then return nil end
-    local sizes, row_total = parse_rows(rows or "")
+    local sizes, row_total = parse_rows(rows)
     if not sizes then return nil end
-    cols[#cols + 1] = { span = span, rows = rows or "", sizes = sizes, row_total = row_total }
+    cols[#cols + 1] = { span = span, rows = rows, sizes = sizes, row_total = row_total }
     total = total + span
   end
   if #cols == 0 or (total ~= 10 and total ~= 12) then return nil end
@@ -195,22 +211,31 @@ local function format_columns(layout)
   return table.concat(parts, "|")
 end
 
+-- An even grid for n windows: about as many columns as rows, at most 8 rows
+-- to a column. Past 96 windows the last tile takes the rest.
 local function grid_spec(n)
-  local cols = math.min(math.ceil(math.sqrt(n)), 4)
-  local span = ({ "12", "6", "4", "3" })[cols]
+  local least = math.min(math.ceil(math.sqrt(n)), 4)
+  local cols = 12
+  for _, c in ipairs({ 1, 2, 3, 4, 6, 12 }) do
+    if c >= least and c * 8 >= n then cols = c break end
+  end
+  local span = tostring(math.floor(12 / cols))
   local parts, left = {}, n
   for c = 1, cols do
-    local rows = math.ceil(left / (cols - c + 1))
+    local rows = math.max(1, math.min(8, math.ceil(left / (cols - c + 1))))
     parts[#parts + 1] = span .. ":" .. rows
     left = left - rows
   end
   return table.concat(parts, "|")
 end
 
+-- Hyprland reports a monitor's mode size; odd transforms turn it a quarter.
+local function rotated(monitor) return (tonumber(monitor.transform) or 0) % 2 == 1 end
+
 local function monitor_shape(monitor)
   if not monitor then return "standard" end
   local w, h = monitor.width, monitor.height
-  if monitor.transform == 1 or monitor.transform == 3 then w, h = h, w end
+  if rotated(monitor) then w, h = h, w end
   if h > w then return "portrait" end
   if w / h >= 2.0 then return "ultrawide" end
   return "standard"
@@ -282,11 +307,13 @@ local function area_for(key, s)
   if type(gaps_out) == "number" then gaps_out = { top = gaps_out, right = gaps_out, bottom = gaps_out, left = gaps_out } end
   local r = type(monitor.reserved) == "table" and monitor.reserved or {}
   local scale = monitor.scale or 1
+  local width, height = monitor.width, monitor.height
+  if rotated(monitor) then width, height = height, width end
   return {
     x = monitor.x + (r.left or 0) + (gaps_out.left or 0),
     y = monitor.y + (r.top or 0) + (gaps_out.top or 0),
-    w = monitor.width / scale - (r.left or 0) - (r.right or 0) - (gaps_out.left or 0) - (gaps_out.right or 0),
-    h = monitor.height / scale - (r.top or 0) - (r.bottom or 0) - (gaps_out.top or 0) - (gaps_out.bottom or 0),
+    w = width / scale - (r.left or 0) - (r.right or 0) - (gaps_out.left or 0) - (gaps_out.right or 0),
+    h = height / scale - (r.top or 0) - (r.bottom or 0) - (gaps_out.top or 0) - (gaps_out.bottom or 0),
   }, monitor
 end
 
@@ -354,6 +381,9 @@ local function recalculate(ctx)
       if not alive[id] or tile < 1 or tile > #tiles then assign[id], Q.dirty = nil, true else used[tile] = true end
     end
     local overflow = {}
+    -- A tile picked from a drop area holds for the app launched from it, not
+    -- for whatever opens much later.
+    if s.pending and os.time() - (s.pending_at or 0) > PENDING_SECONDS then s.pending, s.pending_at = nil, nil end
     for _, t in ipairs(ctx.targets) do
       local id = t.window and tostring(t.window.stable_id)
       if id and not assign[id] then
@@ -362,7 +392,7 @@ local function recalculate(ctx)
         if not want then
           for _, i in ipairs(fill) do if not used[i] then want = i break end end
         end
-        s.pending = nil
+        s.pending, s.pending_at = nil, nil
         if want then assign[id], used[want], Q.dirty = want, true, true else overflow[#overflow + 1] = t end
       end
     end
@@ -395,23 +425,62 @@ end
 
 ---------------------------------------------------------------------- control
 
-local function apply_rule(key)
-  local s = Q.state.workspaces[key]
-  if Q.rules and Q.rules[key] then
-    pcall(function() Q.rules[key]:set_enabled(false) end)
+-- Point a workspace at a layout (nil: drop Quilt's rule). Hyprland can only
+-- disable a rule, not remove it, so a new one is made only when the rule in
+-- place says something else or something newer (like Omarchy's Super+L)
+-- overrides it.
+local function set_rule(key, layout, gaps_in, gaps_out)
+  Q.rules = Q.rules or {}
+  local current = Q.rules[key]
+  -- Quilt 0.1.1 kept the bare rule; take those over on an in-place reload.
+  if current and type(current) ~= "table" then current = { rule = current } end
+  local sig = layout and table.concat({ layout, tostring(gaps_in), tostring(gaps_out) }, "|")
+  if current and sig and current.sig == sig then
+    local ok, ws = pcall(hl.get_workspace, key)
+    local now = ok and ws and ws.tiled_layout
+    if not now or now == layout or "lua:" .. now == layout then return end
+  end
+  if current then
+    pcall(function() current.rule:set_enabled(false) end)
     Q.rules[key] = nil
   end
-  if not s or not s.spec then return end
-  local rule = { workspace = key, layout = LAYOUTS[s.spec] and s.spec or "lua:quilt" }
-  if s.gaps_in then rule.gaps_in = s.gaps_in end
-  if s.gaps_out then rule.gaps_out = s.gaps_out end
-  Q.rules = Q.rules or {}
-  Q.rules[key] = hl.workspace_rule(rule)
+  if not layout then return end
+  local rule = { workspace = key, layout = layout }
+  if gaps_in then rule.gaps_in = gaps_in end
+  if gaps_out then rule.gaps_out = gaps_out end
+  Q.rules[key] = { rule = hl.workspace_rule(rule), sig = sig }
+end
+
+local function apply_rule(key)
+  local s = Q.state.workspaces[key]
+  if not s or not s.spec then return set_rule(key, nil) end
+  set_rule(key, LAYOUTS[s.spec] and s.spec or "lua:quilt", s.gaps_in, s.gaps_out)
+end
+
+-- The layout a workspace had before Quilt: what Omarchy's Super+L saved for
+-- it, or the configured default.
+local function omarchy_layout(key)
+  local f = key:match("^%d+$") and io.open(STATE_HOME .. "/omarchy/workspace-layouts/" .. key .. ".lua")
+  if f then
+    local saved = f:read("a"):match('layout%s*=%s*"([%w_:%-]+)"')
+    f:close()
+    if saved then return saved end
+  end
+  return hl.get_config("general.layout") or "dwindle"
+end
+
+-- All-empty tiles, for a workspace with no tiled windows to lay out.
+local function write_empty(key)
+  local s = Q.state.workspaces[key]
+  if not s or not s.spec or LAYOUTS[s.spec] then return end
+  local area, monitor = area_for(key, s)
+  if not area then return end
+  local spec = s.spec == "smart" and smart_spec(0, monitor) or s.spec
+  write_tiles(key, s, spec, area, tiles_for(area, Q.parse(spec) or Q.parse("6|6")), {}, 0)
 end
 
 -- Make Hyprland lay the workspace out again: a zero-pixel resize of one of
--- its tiled windows does that without moving anything. An empty workspace has
--- nothing to lay out, so its (all empty) tiles are written directly.
+-- its tiled windows does that without moving anything.
 function Q.refresh(key)
   local ok, windows = pcall(hl.get_workspace_windows, key)
   if ok and windows then
@@ -422,13 +491,28 @@ function Q.refresh(key)
       end
     end
   end
-  local s = Q.state.workspaces[key]
-  if not s or not s.spec or LAYOUTS[s.spec] then return end
-  local area, monitor = area_for(key, s)
-  if not area then return end
-  local spec = s.spec == "smart" and smart_spec(0, monitor) or s.spec
-  local tiles = tiles_for(area, Q.parse(spec) or Q.parse("6|6"))
-  write_tiles(key, s, s.spec, area, tiles, {}, 0)
+  write_empty(key)
+end
+
+-- When the last tiled window leaves a workspace (closed, floated or moved
+-- away), Hyprland doesn't lay it out again, so its tiles are marked empty
+-- here. `gone` is the window leaving, which may still be listed.
+local function settle(key, gone)
+  local left = tiled_ids(key)
+  left[gone] = nil
+  if next(left) == nil then write_empty(key) end
+end
+
+local function forget(s, id)
+  local had = s.assign[id] ~= nil
+  s.assign[id] = nil
+  for i, o in ipairs(s.order) do
+    if o == id then
+      table.remove(s.order, i)
+      return true
+    end
+  end
+  return had
 end
 
 local function active_in(key)
@@ -465,8 +549,9 @@ function Q.set(key, spec, gaps_in, gaps_out)
   local s = ws_state(key)
   if spec == "off" then
     Q.state.workspaces[key] = nil
-    apply_rule(key)
-    pcall(hl.workspace_rule, { workspace = key, layout = hl.get_config("general.layout") or "dwindle" })
+    -- Disabling Quilt's rule alone doesn't switch the workspace back; a rule
+    -- naming its old layout does.
+    set_rule(key, omarchy_layout(key))
     os.remove(tiles_file(key))
     Q.save()
     return "ok"
@@ -486,8 +571,12 @@ end
 -- unit. A middle column trades with both neighbours so it stays centered.
 function Q.grow(key, delta)
   local s = Q.state.workspaces[key]
-  local layout = s and Q.parse(s.spec or "")
-  if not layout or not layout.cols then return "Use Edit to resize a drawn layout" end
+  if not s or not s.spec then return "This workspace doesn't use a Quilt layout" end
+  if s.spec == "smart" then return "Smart sizes its own columns. Pick a column layout to resize it." end
+  if LAYOUTS[s.spec] then return "Resizing works on Quilt's column layouts" end
+  local layout = Q.parse(s.spec)
+  if not layout then return "not a grid layout" end
+  if not layout.cols then return "Use Edit to resize a drawn layout" end
   if #layout.cols < 2 then return "nothing to resize" end
   local id = active_in(key)
   local tile = id and s.assign[id]
@@ -598,8 +687,18 @@ end
 function Q.target(key, n)
   local s = Q.state.workspaces[key]
   if not s or not Q.parse(s.spec or "") then return "not a grid layout" end
-  s.pending = tonumber(n)
+  s.pending, s.pending_at = tonumber(n), os.time()
   return "ok"
+end
+
+-- The specs from a list that Quilt can use, one per line, so cycling skips a
+-- broken preset instead of stopping at it.
+function Q.usable(...)
+  local out = {}
+  for _, spec in ipairs({ ... }) do
+    if spec == "smart" or LAYOUTS[spec] or Q.parse(spec) then out[#out + 1] = spec end
+  end
+  return table.concat(out, "\n")
 end
 
 function Q.status(key)
@@ -638,9 +737,8 @@ function Q.load()
     hl.on("window.close", function(w)
       if not w then return end
       local id = tostring(w.stable_id)
-      for _, s in pairs(Q.state.workspaces) do
-        s.assign[id] = nil
-        for i, o in ipairs(s.order) do if o == id then table.remove(s.order, i) break end end
+      for key, s in pairs(Q.state.workspaces) do
+        if forget(s, id) then settle(key, id) end
       end
       Q.dirty = true
     end),
@@ -648,12 +746,20 @@ function Q.load()
       if not w or not w.workspace then return end
       local id, here = tostring(w.stable_id), ws_key(w.workspace)
       for key, s in pairs(Q.state.workspaces) do
-        if key ~= here then
-          s.assign[id] = nil
-          for i, o in ipairs(s.order) do if o == id then table.remove(s.order, i) break end end
-        end
+        if key ~= here and forget(s, id) then settle(key, id) end
       end
       Q.dirty = true
+    end),
+    -- Hyprland has no event for a window starting to float; this one fires
+    -- then (and often otherwise, so it only looks things up).
+    hl.on("window.update_rules", function(w)
+      if not w or not w.floating or not w.workspace then return end
+      local key, id = ws_key(w.workspace), tostring(w.stable_id)
+      local s = Q.state.workspaces[key]
+      if s and forget(s, id) then
+        Q.dirty = true
+        settle(key, id)
+      end
     end),
   }
 
