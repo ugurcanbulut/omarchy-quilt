@@ -31,7 +31,7 @@ Anything that isn't columns can be drawn as rectangles on a grid: `@12x12:` foll
 
 Tiles are numbered by their top-left corner: left to right, and top to bottom among tiles that start in the same column. In `6:2|6:2`, tiles 1 and 2 are the left column.
 
-The popup has 25 built-in layouts in four groups (columns, main + stack, grids and rows, adaptive), each shown as a small picture of your current number of windows. Hover one to read what it does.
+The popup has two tabs. **Built-in** holds 25 layouts in four groups (columns, main + stack, grids and rows, adaptive), each shown as a small picture of your current number of windows; **Yours** holds the ones you make. The popup opens on the tab with the current layout. Hover a layout to read what it does.
 
 ## Features
 
@@ -100,7 +100,7 @@ omarchy bar move ugurcanbulut.quilt --section right --index 0
 
 ## Custom layouts
 
-Layouts saved from the editor show up in a **YOURS** section of the popup and in the next/previous cycle. Right-click one twice to remove it.
+Layouts saved from the editor show up on the popup's **Yours** tab and in the next/previous cycle. Right-click one twice to remove it.
 
 They live in a `presets` list on the Quilt entry in your bar layout in `~/.config/omarchy/shell.json`, where you can also add them by hand:
 
@@ -115,7 +115,7 @@ They live in a `presets` list on the Quilt entry in your bar layout in `~/.confi
 
 - A preset is a spec string, or an object with `spec` and optional `label`, `gapsIn` and `gapsOut` (in pixels), and `apps` (tile number to window class, see [App homes](#app-homes)).
 - `quilt use Dev` applies a preset by its label, which is handy for key bindings.
-- Add `"builtInPresets": false` to show only your own layouts plus the adaptive ones.
+- Add `"builtInPresets": false` to keep only the adaptive layouts (Smart, Dwindle, Scrolling, Monocle) on the Built-in tab.
 - Add `"overflow": "stack"` to stack extra windows in the last tile instead of making them tabs.
 
 ### Your own Smart and monitor defaults

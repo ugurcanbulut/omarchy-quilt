@@ -27,7 +27,17 @@ Panel {
 
   // Specs per workspace, from the engine.
   property var summary: ({})
-  property var sections: []
+
+  // The popup's two tabs: Quilt's own presets, and yours.
+  property string tab: "builtin"
+  property var builtInList: []
+  property var yoursList: []
+  readonly property var sections: tab === "yours"
+    ? (yoursList.length ? [{ title: "", presets: yoursList }] : [])
+    : builtInList
+  // Cursor positions of the tab buttons (presets and actions count from 0).
+  readonly property int builtInTabIndex: -2
+  readonly property int yoursTabIndex: -3
 
   // Scroll deltas not yet worth a whole step (touchpads send many small ones).
   property real wheelAccumulator: 0
@@ -61,10 +71,10 @@ Panel {
   readonly property int mainIndex: flatPresets.length + 3
   readonly property int offIndex: flatPresets.length + 4
 
-  // The popup's rows as the arrow keys see them: four presets to a row in
-  // each section, then Edit | New, then Mirror | To main | Off.
+  // The popup's rows as the arrow keys see them: the tabs, four presets to a
+  // row in each section, then Edit | New, then Mirror | To main | Off.
   readonly property var navRows: {
-    var rows = [], start = 0
+    var rows = [{ items: [builtInTabIndex, yoursTabIndex], columns: 2 }], start = 0
     sections.forEach(function(section) {
       for (var i = 0; i < section.presets.length; i += 4) {
         var items = []
@@ -84,6 +94,10 @@ Panel {
   // The line under the buttons describes whatever the cursor is on.
   readonly property string hint: {
     var i = cursorIndex
+    if (i === builtInTabIndex) return "Quilt's own layouts: columns, main and stack, grids and rows, and the adaptive ones."
+    if (i === yoursTabIndex) return yoursList.length
+      ? "Layouts you saved from the editor or added to shell.json."
+      : "Layouts you save from the editor show up here."
     if (i >= 0 && i < flatPresets.length) return describe(flatPresets[i])
     if (i === editIndex) return canEdit
       ? "Edit this workspace's layout on screen: drag lines to resize, split, remove or swap tiles, then save it as a preset."
@@ -248,8 +262,15 @@ Panel {
     root.close()
   }
 
+  function setTab(name) {
+    tab = name
+    pendingDelete = -1
+  }
+
   function activate(index) {
-    if (index >= 0 && index < flatPresets.length) applyPreset(flatPresets[index])
+    if (index === builtInTabIndex) setTab("builtin")
+    else if (index === yoursTabIndex) setTab("yours")
+    else if (index >= 0 && index < flatPresets.length) applyPreset(flatPresets[index])
     else if (index === editIndex) { if (canEdit) startEdit() }
     else if (index === newIndex) startNew()
     else if (index === mirrorIndex) { run(["mirror"]); root.close() }
@@ -258,9 +279,13 @@ Panel {
   }
 
   function moveCursor(dx, dy) {
-    if (cursorIndex < 0) { cursorIndex = 0; return }
+    if (cursorIndex === -1) { cursorIndex = flatPresets.length ? 0 : editIndex; return }
+    // Left and right walk the popup in reading order.
     if (dx !== 0) {
-      cursorIndex = Math.max(0, Math.min(offIndex, cursorIndex + dx))
+      var order = []
+      navRows.forEach(function(row) { row.items.forEach(function(i) { order.push(i) }) })
+      var at = order.indexOf(cursorIndex)
+      cursorIndex = at < 0 ? order[0] : order[Math.max(0, Math.min(order.length - 1, at + dx))]
       return
     }
     // Up and down go to the item underneath, even where rows hold different
@@ -284,9 +309,8 @@ Panel {
       return { spec: p.spec.replace(/\s/g, ""), label: p.label || p.spec, gapsIn: p.gapsIn, gapsOut: p.gapsOut, apps: p.apps, custom: true, customIndex: index }
     }).filter(Boolean)
     var showBuiltIn = setting("builtInPresets", true) !== false
-    var list = (builtIn || []).filter(function(s) { return showBuiltIn || s.title === "ADAPTIVE" })
-    if (mine.length) list.splice(list.length - (list.length && list[list.length - 1].title === "ADAPTIVE" ? 1 : 0), 0, { title: "YOURS", presets: mine })
-    sections = list
+    builtInList = (builtIn || []).filter(function(s) { return showBuiltIn || s.title === "ADAPTIVE" })
+    yoursList = mine
   }
 
   property var builtInSections: []
@@ -307,6 +331,9 @@ Panel {
   onOpenedChanged: {
     pendingDelete = -1
     if (!opened) return
+    // Open on the tab that holds the current layout.
+    if (yoursList.some(isCurrent)) tab = "yours"
+    else if (builtInList.some(function(section) { return section.presets.some(isCurrent) })) tab = "builtin"
     cursorIndex = -1
     scroller.contentY = 0
     Hyprland.refreshWorkspaces()
@@ -382,6 +409,146 @@ Panel {
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+
+  // Preset sections in a 4-wide grid; each tab has one. Only the shown tab
+  // (`active`) takes the cursor and clicks.
+  component PresetSections: Column {
+    id: presetSections
+    property var model: []
+    property bool active: false
+
+    spacing: Style.space(10)
+    opacity: active ? 1 : 0
+    enabled: active
+
+    Repeater {
+      model: presetSections.model
+
+      Column {
+        id: sectionColumn
+        required property var modelData
+        required property int index
+        readonly property int offset: {
+          var n = 0
+          for (var i = 0; i < index; i++) n += presetSections.model[i].presets.length
+          return n
+        }
+
+        width: presetSections.width
+        spacing: Style.space(6)
+
+        PanelSectionHeader {
+          visible: sectionColumn.modelData.title !== ""
+          text: sectionColumn.modelData.title
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+        }
+
+        Grid {
+          id: presetGrid
+          width: parent.width
+          columns: 4
+          spacing: Style.space(6)
+
+          readonly property real cellWidth: (width - spacing * (columns - 1)) / columns
+
+          Repeater {
+            model: sectionColumn.modelData.presets
+
+            Button {
+              id: presetButton
+              required property var modelData
+              required property int index
+              readonly property int flatIndex: sectionColumn.offset + index
+              readonly property bool builtIn: root.builtInLayouts[modelData.spec] !== undefined
+
+              width: presetGrid.cellWidth
+              height: Style.space(62)
+              bordered: true
+              selected: root.isCurrent(modelData)
+              tooltipText: modelData.label || modelData.spec
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              hasCursor: presetSections.active && root.cursorIndex === flatIndex
+              onClicked: root.applyPreset(modelData)
+              // Your own presets: right-click twice to remove.
+              onRightClicked: {
+                if (!modelData.custom) return
+                root.cursorIndex = flatIndex
+                if (root.pendingDelete === modelData.customIndex) root.removePreset(modelData.customIndex)
+                else root.pendingDelete = modelData.customIndex
+              }
+              onHovered: function(h) { if (h && presetSections.active) root.cursorIndex = presetButton.flatIndex }
+              onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+
+              Thumb {
+                visible: !presetButton.builtIn
+                x: (parent.width - width) / 2
+                y: Style.space(8)
+                width: parent.width - Style.space(18)
+                height: Style.space(28)
+                spec: root.previewSpec(presetButton.modelData.spec)
+                windows: root.activeWindows
+                color: root.bar.foreground
+              }
+
+              // Presets with app homes: apply and open their apps.
+              Text {
+                visible: root.hasApps(presetButton.modelData)
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.margins: Style.space(4)
+                textFormat: Text.PlainText
+                text: root.glyph(0xF14DE) // md-rocket-launch
+                color: root.bar.foreground
+                opacity: launchMouse.containsMouse ? 1 : 0.55
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+
+                MouseArea {
+                  id: launchMouse
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(4)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: if (containsMouse) root.cursorIndex = presetButton.flatIndex
+                  onClicked: root.launchPreset(presetButton.modelData)
+                }
+              }
+
+              Text {
+                visible: presetButton.builtIn
+                x: (parent.width - width) / 2
+                y: Style.space(6)
+                textFormat: Text.PlainText
+                text: root.glyph(root.builtInLayouts[presetButton.modelData.spec] || 0xF0574)
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.space(26)
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Style.space(5)
+                width: parent.width - Style.space(8)
+                horizontalAlignment: Text.AlignHCenter
+                fontSizeMode: Text.HorizontalFit
+                minimumPixelSize: 7
+                textFormat: Text.PlainText
+                readonly property bool removing: presetButton.modelData.custom === true && root.pendingDelete === presetButton.modelData.customIndex
+                text: removing ? "Remove?" : (presetButton.modelData.custom === true && presetButton.modelData.label !== presetButton.modelData.spec ? presetButton.modelData.label : presetButton.modelData.spec)
+                color: removing ? Color.urgent : root.bar.foreground
+                opacity: removing ? 1 : 0.7
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   // A layout drawn small: filled tiles solid, tiles past `windows` outlined.
   component Thumb: Item {
@@ -520,129 +687,73 @@ Panel {
             }
           }
 
-          Repeater {
-            model: root.sections
+          // Built-in | Yours. Both tabs keep one height, so the buttons
+          // below don't jump when you switch.
+          Row {
+            id: tabRow
+            width: parent.width
+            spacing: Style.space(6)
 
-            Column {
-              id: sectionColumn
-              required property var modelData
-              required property int index
-              readonly property int offset: {
-                var n = 0
-                for (var i = 0; i < index; i++) n += root.sections[i].presets.length
-                return n
-              }
+            readonly property real cellWidth: (width - spacing) / 2
 
-              width: column.width
-              spacing: Style.space(6)
+            Repeater {
+              model: [
+                { name: "builtin", label: "Built-in", index: root.builtInTabIndex },
+                { name: "yours", label: "Yours", index: root.yoursTabIndex }
+              ]
 
-              PanelSectionHeader {
-                text: sectionColumn.modelData.title
+              Button {
+                required property var modelData
+                width: tabRow.cellWidth
+                text: modelData.label + (modelData.name === "yours" && root.yoursList.length ? " · " + root.yoursList.length : "")
+                bordered: true
+                selected: root.tab === modelData.name
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
+                hasCursor: root.cursorIndex === modelData.index
+                onClicked: root.setTab(modelData.name)
+                onHovered: function(h) { if (h) root.cursorIndex = modelData.index }
+                onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
+              }
+            }
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(builtInTab.implicitHeight, yoursTab.implicitHeight)
+
+            PresetSections {
+              id: builtInTab
+              width: parent.width
+              model: root.builtInList
+              active: root.tab === "builtin"
+            }
+
+            Column {
+              id: yoursTab
+              width: parent.width
+              spacing: Style.space(10)
+              opacity: root.tab === "yours" ? 1 : 0
+              enabled: root.tab === "yours"
+
+              PresetSections {
+                width: parent.width
+                model: root.yoursList.length ? [{ title: "", presets: root.yoursList }] : []
+                active: root.tab === "yours"
               }
 
-              Grid {
-                id: presetGrid
+              Text {
+                visible: root.yoursList.length === 0
                 width: parent.width
-                columns: 4
-                spacing: Style.space(6)
-
-                readonly property real cellWidth: (width - spacing * (columns - 1)) / columns
-
-                Repeater {
-                  model: sectionColumn.modelData.presets
-
-                  Button {
-                    id: presetButton
-                    required property var modelData
-                    required property int index
-                    readonly property int flatIndex: sectionColumn.offset + index
-                    readonly property bool builtIn: root.builtInLayouts[modelData.spec] !== undefined
-
-                    width: presetGrid.cellWidth
-                    height: Style.space(62)
-                    bordered: true
-                    selected: root.isCurrent(modelData)
-                    tooltipText: modelData.label || modelData.spec
-                    foreground: root.bar.foreground
-                    fontFamily: root.bar.fontFamily
-                    hasCursor: root.cursorIndex === flatIndex
-                    onClicked: root.applyPreset(modelData)
-                    // Your own presets: right-click twice to remove.
-                    onRightClicked: {
-                      if (!modelData.custom) return
-                      root.cursorIndex = flatIndex
-                      if (root.pendingDelete === modelData.customIndex) root.removePreset(modelData.customIndex)
-                      else root.pendingDelete = modelData.customIndex
-                    }
-                    onHovered: function(h) { if (h) root.cursorIndex = presetButton.flatIndex }
-                    onHasCursorChanged: if (hasCursor) root.ensureVisible(this)
-
-                    Thumb {
-                      visible: !presetButton.builtIn
-                      x: (parent.width - width) / 2
-                      y: Style.space(8)
-                      width: parent.width - Style.space(18)
-                      height: Style.space(28)
-                      spec: root.previewSpec(presetButton.modelData.spec)
-                      windows: root.activeWindows
-                      color: root.bar.foreground
-                    }
-
-                    // Presets with app homes: apply and open their apps.
-                    Text {
-                      visible: root.hasApps(presetButton.modelData)
-                      anchors.top: parent.top
-                      anchors.right: parent.right
-                      anchors.margins: Style.space(4)
-                      textFormat: Text.PlainText
-                      text: root.glyph(0xF14DE) // md-rocket-launch
-                      color: root.bar.foreground
-                      opacity: launchMouse.containsMouse ? 1 : 0.55
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.body
-
-                      MouseArea {
-                        id: launchMouse
-                        anchors.fill: parent
-                        anchors.margins: -Style.space(4)
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onContainsMouseChanged: if (containsMouse) root.cursorIndex = presetButton.flatIndex
-                        onClicked: root.launchPreset(presetButton.modelData)
-                      }
-                    }
-
-                    Text {
-                      visible: presetButton.builtIn
-                      x: (parent.width - width) / 2
-                      y: Style.space(6)
-                      textFormat: Text.PlainText
-                      text: root.glyph(root.builtInLayouts[presetButton.modelData.spec] || 0xF0574)
-                      color: root.bar.foreground
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.space(26)
-                    }
-
-                    Text {
-                      anchors.horizontalCenter: parent.horizontalCenter
-                      anchors.bottom: parent.bottom
-                      anchors.bottomMargin: Style.space(5)
-                      width: parent.width - Style.space(8)
-                      horizontalAlignment: Text.AlignHCenter
-                      fontSizeMode: Text.HorizontalFit
-                      minimumPixelSize: 7
-                      textFormat: Text.PlainText
-                      readonly property bool removing: presetButton.modelData.custom === true && root.pendingDelete === presetButton.modelData.customIndex
-                      text: removing ? "Remove?" : (presetButton.modelData.custom === true && presetButton.modelData.label !== presetButton.modelData.spec ? presetButton.modelData.label : presetButton.modelData.spec)
-                      color: removing ? Color.urgent : root.bar.foreground
-                      opacity: removing ? 1 : 0.7
-                      font.family: root.bar.fontFamily
-                      font.pixelSize: Style.font.caption
-                    }
-                  }
-                }
+                topPadding: Style.space(8)
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                textFormat: Text.PlainText
+                text: "No layouts of your own yet. Edit this one or draw a New one below, then save it as a preset."
+                color: root.bar.foreground
+                opacity: 0.6
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.bodySmall
               }
             }
           }

@@ -25,7 +25,7 @@
         "key": "builtInPresets",
         "type": "boolean",
         "label": "Show built-in presets",
-        "description": "Turn off to show only your own presets (from this widget's presets list in shell.json) and the adaptive ones.",
+        "description": "Turn off to keep only the adaptive layouts (Smart, Dwindle, Scrolling, Monocle) on the Built-in tab.",
         "defaultValue": true
       }
     ]
