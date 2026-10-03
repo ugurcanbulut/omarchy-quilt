@@ -298,17 +298,79 @@ local function window_rect(tile, area, s)
   return { x = tile.x + left, y = tile.y + top, w = tile.w - left - right, h = tile.h - top - bottom }
 end
 
+-- While Super+arrows have an empty tile picked, the window you left keeps
+-- Hyprland's focus (nothing else can hold it), so a rule draws its border as
+-- an inactive one: windows tagged quilt-away. The tag follows the picks.
+local AWAY_TAG = "quilt-away"
+
+-- A border colour from the config (a gradient table) as a rule value.
+local function border_value(g)
+  if type(g) ~= "table" or type(g.colors) ~= "table" or #g.colors == 0 then return nil end
+  local parts = {}
+  for _, c in ipairs(g.colors) do
+    c = math.tointeger(c)
+    if not c then return nil end
+    parts[#parts + 1] = string.format("rgba(%06x%02x)", c & 0xFFFFFF, (c >> 24) & 0xFF)
+  end
+  -- An angle keeps two colours from reading as an active, inactive pair.
+  if #parts > 1 or (tonumber(g.angle) or 0) ~= 0 then
+    parts[#parts + 1] = math.floor((tonumber(g.angle) or 0) * 180 / math.pi + 0.5) .. "deg"
+  end
+  return table.concat(parts, " ")
+end
+
+local function away_rule()
+  if Q.away_rule then return end
+  local color = border_value(hl.get_config("general.col.inactive_border"))
+  if not color then return end
+  local ok, rule = pcall(hl.window_rule, { match = { tag = AWAY_TAG }, border_color = color })
+  if ok then Q.away_rule = rule or true else Q.last_error = tostring(rule) end
+end
+
+-- Tag the windows left for a picked tile, and only those (a tag can outlive
+-- a reload, so every window is looked at).
+local function sync_away()
+  local want = {}
+  for _, s in pairs(Q.state.workspaces) do
+    if type(s.pending_nav) == "string" and s.pending then want[s.pending_nav] = true end
+  end
+  local ok, windows = pcall(hl.get_windows)
+  if not ok or not windows then return end
+  for _, w in ipairs(windows) do
+    local has = false
+    for _, t in ipairs(w.tags or {}) do
+      if (t:gsub("%*$", "")) == AWAY_TAG then has = true end
+    end
+    if has ~= (want[tostring(w.stable_id)] == true) then
+      hl.dispatch(hl.dsp.window.tag({ tag = (has and "-" or "+") .. AWAY_TAG, window = "address:" .. w.address }))
+    end
+  end
+end
+
+-- After the layout pass that wrote the tiles, not during it.
+local function schedule_away()
+  if Q.away_busy then return end
+  Q.away_busy = true
+  hl.timer(function()
+    Q.away_busy = nil
+    local ok, err = pcall(sync_away)
+    if not ok then Q.last_error = tostring(err) end
+  end, { timeout = 10, type = "oneshot" })
+end
+
 local function write_tiles(key, s, spec, area, tiles, filled, count)
   local out = {}
   for i, t in ipairs(tiles) do
     out[i] = { index = i, filled = filled[i] ~= nil, app = filled[i] or "", home = (s.homes or {})[i] or "",
-      selected = s.pending == i and not filled[i], rect = window_rect(t, area, s) }
+      selected = s.pending == i and not filled[i], nav = s.pending == i and not filled[i] and s.pending_nav ~= nil,
+      grab = s.nav_grab or 0, rect = window_rect(t, area, s) }
   end
   write_file(tiles_file(key), json({
     workspace = key, spec = spec, smart = s.spec == "smart", windows = count,
     area = { x = area.x, y = area.y, w = area.w, h = area.h }, tiles = out,
   }) .. "\n")
   hl.dispatch(hl.dsp.event("quilt>>" .. key))
+  schedule_away()
 end
 
 -- The area a workspace's tiles share, for a workspace with no windows to ask:
@@ -953,6 +1015,7 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
     -- Remembered as your choice, so a monitor default doesn't bring Quilt
     -- back here.
     Q.state.workspaces[key] = { off = true, assign = {}, order = {} }
+    schedule_away()
     -- Disabling Quilt's rule alone doesn't switch the workspace back; a rule
     -- naming its old layout does.
     set_rule(key, omarchy_layout(key))
@@ -1100,7 +1163,25 @@ end
 function Q.target(key, n)
   local s = Q.state.workspaces[key]
   if not s or not Q.parse(s.spec or "") then return "not a grid layout" end
-  s.pending, s.pending_at, s.pending_nav = tonumber(n), os.time(), nil
+  n = tonumber(n)
+  -- Enter on a tile picked with Super+arrows: it stays picked, so if the
+  -- launcher closes without an app, the tile gets the keyboard back and the
+  -- arrows go on from it.
+  if not (s.pending == n and s.pending_nav) then
+    s.pending, s.pending_at, s.pending_nav = n, os.time(), nil
+  end
+  Q.refresh(key)
+  return "ok"
+end
+
+-- Drop the tile picked with Super+arrows (Escape on it).
+function Q.deselect(key)
+  local s = Q.state.workspaces[key]
+  if s and s.pending_nav then
+    s.pending, s.pending_at, s.pending_nav = nil, nil, nil
+    Q.save()
+    Q.refresh(key)
+  end
   return "ok"
 end
 
@@ -1191,6 +1272,9 @@ end
 
 ------------------------------------------------------------------- navigation
 
+-- Hyprland's focus reason for a click (eFocusReason in FocusState.hpp).
+local FOCUS_CLICK = 5
+
 -- Omarchy's Super+arrow bindings, which Quilt takes over (and gives back).
 local FOCUS_KEYS = {
   { "l", "SUPER + LEFT", "Focus on left window" },
@@ -1268,9 +1352,18 @@ function Q.navigate(dir)
     s.pending, s.pending_at, s.pending_nav = nil, nil, nil
     hl.dispatch(hl.dsp.focus({ window = "address:" .. owner.address }))
   else
-    -- Remembers the window that keeps the focus meanwhile: focus coming back
-    -- to it (say, when a launcher closes) leaves the selection be.
+    -- The bar widget gives the tile the keyboard. Remembers the window that
+    -- had it: focus coming back to that one (say, when a launcher closes)
+    -- leaves the selection be.
     s.pending, s.pending_at, s.pending_nav = to, nil, w and tostring(w.stable_id) or true
+    s.nav_grab = (s.nav_grab or 0) + 1
+    -- The pointer goes along, as Hyprland's own focus moves take it, so
+    -- focus-follows-mouse doesn't hand the keyboard straight back.
+    local area = area_for(key, s)
+    if area and hl.get_config("cursor.no_warps") ~= true then
+      local t = tiles_for(area, layout)[to]
+      hl.dispatch(hl.dsp.cursor.move({ x = math.floor(t.x + t.w / 2), y = math.floor(t.y + t.h / 2) }))
+    end
   end
   Q.save()
   Q.refresh(key)
@@ -1396,15 +1489,30 @@ function Q.load()
       Q.dirty = true
     end),
     hl.on("window.open", function(w) claim(w) end),
-    -- Focus moving to another window with a tile ends an arrow-key selection
-    -- (a new window has no tile yet, so its arrival doesn't).
-    hl.on("window.active", function(w)
+    -- Focus moving to another window with a tile, or a click on the one you
+    -- left, ends an arrow-key selection. Focus only coming back to that one
+    -- (Hyprland does so when a launcher closes) doesn't, and neither does a
+    -- new window, which has no tile yet.
+    hl.on("window.active", function(w, reason)
       if not w or not w.workspace then return end
       local key, id = ws_key(w.workspace), tostring(w.stable_id)
       local s = Q.state.workspaces[key]
-      if s and s.pending_nav and s.pending_nav ~= id and s.assign[id] then
+      if s and s.pending_nav and s.assign[id] and (s.pending_nav ~= id or reason == FOCUS_CLICK) then
         s.pending, s.pending_at, s.pending_nav = nil, nil, nil
         Q.save()
+        Q.refresh(key)
+      end
+    end),
+    -- A launcher or other layer with the keyboard closing hands it to the
+    -- window you were on; give it back to the picked tile (the bar widget
+    -- maps the tile's surface again when `grab` changes).
+    hl.on("layer.closed", function(ls)
+      if not ls or (tonumber(ls.interactivity) or 0) == 0 or tostring(ls.namespace or ""):match("^quilt%-") then return end
+      local monitor = hl.get_active_monitor()
+      local key = monitor and ws_key(monitor.active_workspace)
+      local s = key and Q.state.workspaces[key]
+      if s and s.pending_nav then
+        s.nav_grab = (s.nav_grab or 0) + 1
         Q.refresh(key)
       end
     end),
@@ -1429,6 +1537,8 @@ function Q.load()
 
   for key in pairs(Q.state.workspaces) do apply_rule(key) end
   Q.save()
+  away_rule()
+  schedule_away()
   for key in pairs(Q.state.workspaces) do Q.refresh(key) end
   Q.loaded = true
   return "ok"

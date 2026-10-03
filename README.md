@@ -38,7 +38,7 @@ The popup has two tabs. **Built-in** holds 25 layouts in four groups (columns, m
 - **Windows keep their tiles.** Close a window and its tile stays empty instead of the others shifting around. The next window you open fills it.
 - **Extra windows become tabs.** With more windows than tiles, the extras join the last tile as tabs (Hyprland's window groups) and move back out into their own tiles as soon as there's room, oldest first. A group you make yourself with Super+G takes one tile and keeps it while you switch tabs.
 - **Drop areas.** Empty tiles show an outline with a "+". Click one to open the app launcher; the app you pick opens in that tile.
-- **Super+arrows reach empty tiles.** On a grid layout, Omarchy's Super+arrows move tile to tile, empty ones included. Stop on an empty tile and it lights up; the next app you open goes there, whether from the launcher or a key binding. A tile with a window focuses that window, as before.
+- **Super+arrows reach empty tiles.** On a grid layout, Omarchy's Super+arrows move tile to tile, empty ones included. An empty tile you stop on lights up and takes the keyboard: Enter opens the app launcher for it, Escape goes back to your window. Any app you open meanwhile, from the launcher or a key binding, goes there. The window you left shows an inactive border until you move on, and a tile with a window focuses that window, as before.
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
 - **App homes and one-click launch.** A layout can remember which app goes in which tile, so your browser always opens in the middle and terminals on the right, and one click opens the apps that aren't there yet. See [App homes](#app-homes).
 - **Monitor defaults.** New workspaces on a monitor can start with a layout of your choice, like Smart on an ultrawide.
@@ -185,6 +185,7 @@ quilt main              # swap the focused window into the main tile
 quilt move <n|empty>    # move the focused window to tile n, or the first empty tile
 quilt swap <a> <b>      # swap the windows in tiles a and b
 quilt target <n>        # open the app launcher; the new app goes to tile n
+quilt deselect          # drop the empty tile picked with Super+arrows
 quilt launch [n]        # open the home apps missing from the workspace, or tile n's app
 quilt home [n] [app]    # make tile n home to an app (default: the focused window's); "none" clears it
 quilt homes [json]      # print or replace the workspace's app homes, like {"2":"chromium"}

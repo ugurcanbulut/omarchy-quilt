@@ -13,6 +13,7 @@
 #   quilt move <n|empty>     move the focused window to tile n, or the first empty one
 #   quilt swap <a> <b>       swap the windows in tiles a and b
 #   quilt target <n> [ws]    open the app launcher; the new app goes to tile n
+#   quilt deselect [ws]      drop the empty tile picked with Super+arrows
 #   quilt launch [n] [ws]    open the apps whose home tiles are empty, or the
 #                            app whose home is tile n
 #   quilt home [n] [app]     make tile n home to an app (default: the focused
@@ -331,6 +332,9 @@ target)
     hyprctl dispatch "hl.dsp.focus({ workspace = $(lua_string "$3") })" >/dev/null
   fi
   call target "$(lua_string "$(workspace_key)")" "$2" && omarchy-menu summon apps
+  ;;
+deselect)
+  call deselect "$(lua_string "${2:-$(workspace_key)}")"
   ;;
 swap)
   [[ ${2:-} =~ ^[0-9]+$ && ${3:-} =~ ^[0-9]+$ ]] || usage

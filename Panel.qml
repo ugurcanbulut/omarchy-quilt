@@ -1338,6 +1338,12 @@ Panel {
       if (!entry || !Layout.parse(entry.spec) || !tiles || tiles.workspace !== key) return []
       return tiles.tiles.filter(function(t) { return !t.filled && (root.dropAreasOn || t.selected) })
     }
+    // The empty tile picked with Super+arrows, which takes the keyboard.
+    readonly property var navTile: {
+      if (!entry || !Layout.parse(entry.spec) || !tiles || tiles.workspace !== key) return null
+      var picked = tiles.tiles.filter(function(t) { return t.nav === true && !t.filled })
+      return picked.length ? picked[0] : null
+    }
 
     screen: barWindow ? barWindow.screen : null
     // The editor draws its own tiles.
@@ -1414,7 +1420,9 @@ Panel {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             textFormat: Text.PlainText
-            text: "Tile " + dropArea.modelData.index + (dropArea.selected
+            text: "Tile " + dropArea.modelData.index + (dropArea.modelData.nav
+              ? " · Enter to open an app here · Esc to cancel"
+              : dropArea.selected
               ? " · the next app you open goes here"
               : dropArea.modelData.home
               ? " · click to open " + dropArea.modelData.home + " · right-click for another app"
@@ -1438,6 +1446,76 @@ Panel {
             root.run([home ? "launch" : "target", String(dropArea.modelData.index), dropLayer.key])
           }
         }
+      }
+    }
+  }
+
+  // The empty tile picked with Super+arrows takes the keyboard, so typing
+  // stops going to the window you left: Enter opens the app launcher for the
+  // tile, Escape hands the keyboard back. Hyprland gives an on-demand layer
+  // the keyboard when it maps, so this one maps only while a tile is picked,
+  // and maps again to take the keyboard back (after a launcher closes, or a
+  // new pick while the pointer had wandered off). It sits over that tile's
+  // drop area and takes its clicks too.
+  PanelWindow {
+    id: tileFocus
+    readonly property var tile: dropLayer.navTile
+    readonly property var monitor: dropLayer.monitor
+    readonly property int grab: tile ? (tile.grab || 0) : -1
+    property int seenGrab: -1
+    property bool remapping: false
+
+    onGrabChanged: {
+      if (grab >= 0 && seenGrab >= 0 && grab !== seenGrab && visible && !keys.activeFocus) {
+        remapping = true
+        remapTimer.restart()
+      }
+      seenGrab = grab
+    }
+
+    Timer {
+      id: remapTimer
+      interval: 60
+      onTriggered: tileFocus.remapping = false
+    }
+
+    screen: dropLayer.screen
+    visible: tile !== null && monitor !== null && editor.mode === "" && !remapping
+    color: "transparent"
+    anchors { top: true; left: true }
+    margins {
+      left: tileFocus.tile && tileFocus.monitor ? Math.round(tileFocus.tile.rect.x - tileFocus.monitor.x) : 0
+      top: tileFocus.tile && tileFocus.monitor ? Math.round(tileFocus.tile.rect.y - tileFocus.monitor.y) : 0
+    }
+    implicitWidth: tile ? Math.max(1, Math.round(tile.rect.w)) : 1
+    implicitHeight: tile ? Math.max(1, Math.round(tile.rect.h)) : 1
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Bottom
+    WlrLayershell.namespace: "quilt-picked-tile"
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+    Item {
+      id: keys
+      anchors.fill: parent
+      focus: true
+      Keys.onPressed: function(event) {
+        event.accepted = true
+        if (!tileFocus.tile) return
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+          root.run(["target", String(tileFocus.tile.index), dropLayer.key])
+        else if (event.key === Qt.Key_Escape)
+          root.run(["deselect", dropLayer.key])
+      }
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      acceptedButtons: Qt.LeftButton | Qt.RightButton
+      onClicked: function(mouse) {
+        if (!tileFocus.tile) return
+        var home = tileFocus.tile.home && mouse.button === Qt.LeftButton
+        root.run([home ? "launch" : "target", String(tileFocus.tile.index), dropLayer.key])
       }
     }
   }
