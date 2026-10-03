@@ -150,7 +150,8 @@ Panel {
     var list = customPresets()
     list.splice(index, 1)
     pendingDelete = -1
-    saveSettings({ presets: list })
+    // With none left, drop the key instead of keeping an empty list.
+    saveSettings({ presets: list.length ? list : undefined })
   }
 
   function focusedScreen() {
@@ -671,7 +672,8 @@ Panel {
     }
 
     screen: barWindow ? barWindow.screen : null
-    visible: emptyTiles.length > 0 && monitor !== null
+    // The editor draws its own tiles.
+    visible: emptyTiles.length > 0 && monitor !== null && editor.mode === ""
     color: "transparent"
     anchors { top: true; bottom: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore
