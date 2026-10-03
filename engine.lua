@@ -472,6 +472,15 @@ local function group_members(w)
   return g, okm and type(members) == "table" and members or {}
 end
 
+-- Whether window `id` is in group g now.
+local function has_member(g, id)
+  local ok, members = pcall(function() return g.members end)
+  for _, m in ipairs(ok and type(members) == "table" and members or {}) do
+    if tostring(m.stable_id) == id then return true end
+  end
+  return false
+end
+
 -- Tabs leave in the order they came: each gets the next number.
 local function next_tab(s)
   local n = 0
@@ -490,10 +499,23 @@ end
 -- tabs instead of squeezing in beside it, and leave again (in the order they
 -- came) when a tile frees up. Only windows Quilt tabbed (s.tabbed) and groups
 -- it made (s.made_group) are ever taken apart; your own groups are left alone.
-local function tidy_tabs(key, overflow_ids, last_owner, free)
+local function tidy_tabs(key, overflow_ids, last_owner)
   local s = Q.state.workspaces[key]
-  if not s or not Q.parse(s.spec or "") or s.spec == "smart" then return end
-  s.tabbed, s.made_group = s.tabbed or {}, s.made_group or {}
+  local layout = s and s.spec ~= "smart" and Q.parse(s.spec or "")
+  if not layout then return end
+  s.tabbed, s.made_group, s.refused = s.tabbed or {}, s.made_group or {}, s.refused or {}
+
+  -- Free tiles as they are now: passes run since this was scheduled, some of
+  -- them for tabs released by an earlier tidy.
+  local free, taken = #layout.tiles, {}
+  for id, tile in pairs(s.assign) do
+    if tile <= #layout.tiles and not taken[tile] and window_by_id(key, id) then taken[tile], free = true, free - 1 end
+  end
+  -- Windows a group turned down (a rule denying groups, locked groups) stay
+  -- beside the tile instead of being tried again on every pass.
+  local wanted = {}
+  for _, id in ipairs(overflow_ids) do if not s.refused[id] then wanted[#wanted + 1] = id end end
+  overflow_ids = wanted
 
   -- Out of their tabs first, one per free tile.
   if free > 0 then
@@ -526,26 +548,29 @@ local function tidy_tabs(key, overflow_ids, last_owner, free)
   if owner and not group_members(owner) then
     for _, id in ipairs(overflow_ids) do
       local g = group_members(window_by_id(key, id))
-      if g and pcall(function() g:add(owner) end) then
+      if g and pcall(function() g:add(owner) end) and has_member(g, last_owner) then
         s.tabbed[last_owner] = next_tab(s)
         overflow_ids, owner = {}, nil
         break
       end
     end
   end
-  if owner and #overflow_ids > 0 then
+  if owner and #overflow_ids > 0 and not s.refused[last_owner] then
     local g = group_members(owner)
     if not g then
       hl.dispatch(hl.dsp.group.toggle({ window = "address:" .. owner.address }))
       owner = window_by_id(key, last_owner)
       g = group_members(owner)
-      if g then s.made_group[last_owner] = true end
+      if g then s.made_group[last_owner] = true else s.refused[last_owner] = true end
     end
     for _, id in ipairs(overflow_ids) do
       local w = window_by_id(key, id)
       -- Already a tab (a pass can come again before the group shows).
       if w and group_members(w) then w = nil end
-      if g and w and pcall(function() g:add(w) end) then s.tabbed[id] = next_tab(s) end
+      if g and w then
+        -- Hyprland reports a refused add without an error.
+        if pcall(function() g:add(w) end) and has_member(g, id) then s.tabbed[id] = next_tab(s) else s.refused[id] = true end
+      end
     end
   end
 
@@ -567,18 +592,22 @@ local function tidy_tabs(key, overflow_ids, last_owner, free)
   for id in pairs(s.tabbed) do
     if not window_by_id(key, id) then s.tabbed[id] = nil end
   end
+  for id in pairs(s.refused) do
+    if not window_by_id(key, id) then s.refused[id] = nil end
+  end
+  if not next(s.refused) then s.refused = nil end
   Q.save()
 end
 
 -- Group changes during a layout pass would start another one, so they wait
 -- for the pass to end.
-local function schedule_tabs(key, overflow_ids, last_owner, free)
+local function schedule_tabs(key, overflow_ids, last_owner)
   Q.busy = Q.busy or {}
   if Q.busy[key] then return end
   Q.busy[key] = true
   hl.timer(function()
     Q.busy[key] = nil
-    local ok, err = pcall(tidy_tabs, key, overflow_ids, last_owner, free)
+    local ok, err = pcall(tidy_tabs, key, overflow_ids, last_owner)
     if not ok then Q.last_error = tostring(err) end
   end, { timeout = 30, type = "oneshot" })
 end
@@ -644,6 +673,28 @@ local function recalculate(ctx)
         end
       end
       if tile and s.assign[here] ~= tile then s.assign[here], Q.dirty = tile, true end
+      -- Smart goes by order. As on a grid, the group keeps the place of the
+      -- member handed over last pass: switching tabs or moving a window into
+      -- the group doesn't send it to the end.
+      if smart then
+        local at, mine = nil, position(s.order, here)
+        for _, m in ipairs(members) do
+          local id = tostring(m.stable_id)
+          local i = id ~= here and before[id] and position(s.order, id)
+          if i then at = i end
+        end
+        if not at and not mine then
+          for _, m in ipairs(members) do
+            local id = tostring(m.stable_id)
+            local i = id ~= here and position(s.order, id)
+            if i then at = i break end
+          end
+        end
+        if at then
+          s.order[at], Q.dirty = here, true
+          if mine and mine ~= at then table.remove(s.order, mine) end
+        end
+      end
       for _, m in ipairs(members) do
         local id = tostring(m.stable_id)
         if id ~= here then s.assign[id], inside[id], alive[id] = nil, true, nil end
@@ -652,7 +703,8 @@ local function recalculate(ctx)
   end
 
   Q.seen = Q.seen or {}
-  local x, y = traded(Q.seen[key], ids)
+  local previous = Q.seen[key]
+  local x, y = traded(previous, ids)
   Q.seen[key] = ids
 
   local placed = {}
@@ -663,6 +715,16 @@ local function recalculate(ctx)
         if id == x then s.order[i] = y elseif id == y then s.order[i] = x end
       end
       Q.dirty = true
+    end
+    -- A new window handed over where one that's gone was: a window moved
+    -- into that one's group (its member list can lag a pass behind). It
+    -- takes the group's place.
+    for i, id in ipairs(ids) do
+      local was = previous and previous[i]
+      if was and was ~= id and not present[was] and not position(s.order, id) then
+        local at = position(s.order, was)
+        if at then s.order[at], Q.dirty = id, true end
+      end
     end
     local order, known = {}, {}
     for _, id in ipairs(s.order) do
@@ -797,7 +859,19 @@ local function recalculate(ctx)
       if #overflow > 0 or (free > 0 and next(s.tabbed or {})) or lonely then
         local ids = {}
         for _, t in ipairs(overflow) do ids[#ids + 1] = tostring(t.window.stable_id) end
-        schedule_tabs(key, ids, owner[last], free)
+        schedule_tabs(key, ids, owner[last])
+      end
+    elseif next(s.tabbed or {}) or next(s.made_group or {}) then
+      -- Extra windows stack now: the tabs Quilt made go back to being
+      -- windows of their own.
+      Q.busy = Q.busy or {}
+      if not Q.busy[key] then
+        Q.busy[key] = true
+        hl.timer(function()
+          Q.busy[key] = nil
+          pcall(release_tabs, key, Q.state.workspaces[key])
+          Q.save()
+        end, { timeout = 30, type = "oneshot" })
       end
     end
   end
@@ -1038,7 +1112,7 @@ function Q.set(key, spec, gaps_in, gaps_out, homes)
   -- Your choice now, which a monitor default leaves alone.
   s.from_default, s.off = nil, nil
   if spec:gsub("%s", "") ~= s.spec then
-    s.pending, s.pending_at, s.pending_nav = nil, nil, nil
+    s.pending, s.pending_at, s.pending_nav, s.refused = nil, nil, nil, nil
     schedule_away()
   end
   if not new or spec == "smart" then release_tabs(key, s) end
