@@ -1774,7 +1774,14 @@ function Q.load()
         Q.refresh(key)
       end
     end),
-    hl.on("workspace.created", function(ws) follow_default(ws_key(ws), ws) end),
+    hl.on("workspace.created", function(ws)
+      local key = ws_key(ws)
+      follow_default(key, ws)
+      -- An empty workspace's tiles are measured on its monitor, known only
+      -- now that it exists.
+      local s = Q.state.workspaces[key]
+      if s and s.spec and not s.off then Q.refresh(key) end
+    end),
     -- Hyprland has no event for a window starting to float; this one fires
     -- then (and often otherwise, so it only looks things up).
     hl.on("window.update_rules", function(w)
@@ -1797,7 +1804,12 @@ function Q.load()
   Q.save()
   away_rule()
   schedule_away()
-  for key in pairs(Q.state.workspaces) do Q.refresh(key) end
+  -- Workspaces that don't exist yet get their tiles when they're created,
+  -- on whichever monitor that is.
+  for key in pairs(Q.state.workspaces) do
+    local ok, ws = pcall(hl.get_workspace, key)
+    if ok and ws then Q.refresh(key) end
+  end
   Q.loaded = true
   return "ok"
 end

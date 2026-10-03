@@ -424,6 +424,23 @@ Panel {
     saveSettings({ presets: list.length ? list : undefined })
   }
 
+  // Every bar has a copy of this widget, and a key binding's IPC call
+  // reaches one of them. The editor opens from the copy on the focused
+  // monitor, so that copy's drop areas make way for it.
+  readonly property var barScreen: dropLayer.screen
+  function fromFocusedBar(name) {
+    var screen = focusedScreen()
+    var copies = root.bar && typeof root.bar.moduleWidgets === "function" ? root.bar.moduleWidgets(root.moduleName) : []
+    for (var i = 0; i < copies.length; i++) {
+      var copy = copies[i]
+      if (copy && copy !== root && copy.barScreen && screen && copy.barScreen.name === screen.name && typeof copy[name] === "function") {
+        copy[name]()
+        return
+      }
+    }
+    root[name]()
+  }
+
   function focusedScreen() {
     var monitor = Hyprland.focusedMonitor
     var screens = Quickshell.screens
@@ -512,7 +529,7 @@ Panel {
   }
 
   function moveCursor(dx, dy) {
-    if (cursorIndex === -1) { cursorIndex = flatPresets.length ? 0 : editIndex; return }
+    if (cursorIndex === -1) { cursorIndex = navRows.length > 1 ? navRows[1].items[0] : editIndex; return }
     // Left and right walk the popup in reading order.
     if (dx !== 0) {
       var order = []
@@ -589,8 +606,8 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    function edit(): void { root.startEdit() }
-    function create(): void { root.startNew() }
+    function edit(): void { root.fromFocusedBar("startEdit") }
+    function create(): void { root.fromFocusedBar("startNew") }
   }
 
   Editor {
@@ -1410,7 +1427,7 @@ Panel {
 
     screen: barWindow ? barWindow.screen : null
     // The editor draws its own tiles.
-    visible: emptyTiles.length > 0 && monitor !== null && editor.mode === ""
+    visible: emptyTiles.length > 0 && monitor !== null && editor.mode === "" && !dropRemap.remapping
     color: "transparent"
     anchors { top: true; bottom: true; left: true; right: true }
     exclusionMode: ExclusionMode.Ignore
@@ -1418,6 +1435,13 @@ Panel {
     WlrLayershell.namespace: "quilt-drop-areas"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     mask: Region { regions: dropRegions.instances }
+
+    // Hyprland leaves a mapped layer where it was when its monitor moves
+    // (undocking, say); this maps it again in the monitor's new place.
+    ScreenMoveRemap {
+      id: dropRemap
+      window: dropLayer
+    }
 
     FileView {
       path: dropLayer.entry ? root.fileFor(dropLayer.key) : ""
@@ -1543,7 +1567,7 @@ Panel {
     }
 
     screen: dropLayer.screen
-    visible: tile !== null && monitor !== null && editor.mode === "" && !remapping
+    visible: tile !== null && monitor !== null && editor.mode === "" && !remapping && !tileRemap.remapping
     color: "transparent"
     anchors { top: true; left: true }
     margins {
@@ -1556,6 +1580,11 @@ Panel {
     WlrLayershell.layer: WlrLayer.Bottom
     WlrLayershell.namespace: "quilt-picked-tile"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+
+    ScreenMoveRemap {
+      id: tileRemap
+      window: tileFocus
+    }
 
     Item {
       id: keys
