@@ -3,14 +3,14 @@
 # Quilt
 
 **Tiling layouts for [Omarchy](https://omarchy.org), right from the bar.**<br>
-Pick a layout and your windows arrange into it. Draw your own on screen.
+Pick a layout, draw your own on screen, leave space empty on purpose, and save apps into their places.
 
 [![Release](https://img.shields.io/github/v/tag/ugurcanbulut/omarchy-quilt?label=release&style=flat-square)](https://github.com/ugurcanbulut/omarchy-quilt/tags)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 ![Omarchy 4](https://img.shields.io/badge/Omarchy-4-1e1e2e?style=flat-square)
 ![Hyprland 0.55+](https://img.shields.io/badge/Hyprland-0.55%2B-58e1ff?style=flat-square)
 
-[Install](#install) · [Features](#features) · [Keys](#keys) · [Editor](#the-editor) · [App homes](#app-homes) · [Settings](#settings) · [Command line](#command-line)
+[Install](#install) · [Features](#features) · [Zen mode](#zen-mode) · [Keys](#keys) · [Editor](#the-editor) · [App homes](#app-homes) · [Settings](#settings) · [Command line](#command-line)
 
 <img src="docs/hero.png" alt="Four labelled windows in the 3:2|6|3:2 layout, an empty tile showing its drop area, and the Quilt popup open from the bar" width="100%">
 
@@ -47,8 +47,23 @@ https://github.com/user-attachments/assets/c50ab122-fff1-4100-9abc-6da8cd3f5cba
 
 ### Layouts
 
+A Quilt layout is a set of real regions. It can fill the monitor, use only part of it, or leave deliberate holes between tiles.
+
+Two simple examples:
+
+```text
+3|6|3                              8|4:2
+
+┌────────┬────────────────┬────────┐    ┌────────────────────┬──────────┐
+│        │                │        │    │                    │          │
+│   3    │       6        │   3    │    │         8          │    2     │
+│        │                │        │    │                    ├──────────┤
+│        │                │        │    │                    │    2     │
+└────────┴────────────────┴────────┘    └────────────────────┴──────────┘
+```
+
 - **28 built-in layouts** in four groups: columns, main + stack, grids and rows, and adaptive ones. The popup draws each as a small picture of your current number of windows; hover one to read what it does.
-- **Your own layouts.** Draw any arrangement in the [editor](#the-editor), gaps included, and keep it on the popup's **Yours** tab.
+- **Your own layouts.** Draw any arrangement in the [editor](#the-editor), including intentional empty space, and keep it on the popup's **Yours** tab.
 - **Smart** picks the layout from the number of windows and the monitor's shape ([details](#smart)).
 - **Hyprland's own layouts** (dwindle, scrolling, monocle) are one click away, and **Off** hands the workspace back to Omarchy.
 - **Per workspace, remembered** across Hyprland reloads and reboots. The bar icon draws the current workspace's layout.
@@ -56,7 +71,44 @@ https://github.com/user-attachments/assets/c50ab122-fff1-4100-9abc-6da8cd3f5cba
 
 <p align="center"><img src="docs/popup.png" alt="The popup's three tabs: Built-in layouts drawn as pictures, Yours with a saved layout, and the settings" width="80%"></p>
 
+### Zen mode
+
+Custom layouts do **not** have to fill the monitor. Cells with no tile stay genuinely empty.
+
+```text
+┌───────────────────────────────────────────────────────────────┐
+│                                                               │
+│             ┌───────────────────────────────┐                 │
+│             │                               │                 │
+│             │                               │                 │
+│             │          YOUR WINDOW          │                 │
+│             │                               │                 │
+│             │                               │                 │
+│             └───────────────────────────────┘                 │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
+        unused space                         unused space
+```
+
+A useful ultrawide setup is what I call **Zen mode**: one normal-sized working region in the middle of a very wide display, with the rest left alone.
+
+No fake spacer windows. No application-specific rules. The space around the window simply is not part of the layout.
+
+<p align="center"><img src="docs/zen-mode.webp" alt="Zen mode on an ultrawide monitor: one large centered terminal tile with the surrounding workspace intentionally left empty" width="100%"></p>
+
+The editor can make this directly. Draw only the region you want, leave the rest of the grid blank, and save it like any other preset. The same idea works for asymmetric layouts and deliberate gaps between windows.
+
 ### Windows
+
+Closing a window does not make the layout collapse around it:
+
+```text
+BEFORE                              AFTER CLOSING THE MIDDLE WINDOW
+
+┌──────────┬──────────────┬──────────┐    ┌──────────┬──────────────┬──────────┐
+│ Obsidian │   Chromium   │ Terminal │    │ Obsidian │      +       │ Terminal │
+└──────────┴──────────────┴──────────┘    └──────────┴──────────────┴──────────┘
+```
 
 - **Windows keep their tiles.** Close one and its tile stays empty instead of the others shifting around; the next window you open fills it.
 - **Main first.** Windows fill the biggest tile first, so a single window in `3|6|3` sits in the middle.
@@ -154,6 +206,20 @@ https://github.com/user-attachments/assets/13edcbea-128e-4dd4-ab7d-b22f3bd1176a
 ## App homes
 
 Give a tile an app and that app opens there, whatever else is on the workspace:
+
+```text
+DEV
+
+┌──────────────┬────────────────────────┬──────────────┐
+│              │                        │              │
+│   Obsidian   │        Chromium        │   Terminal   │
+│              │                        │              │
+└──────────────┴────────────────────────┴──────────────┘
+
+                 Open preset
+                      ↓
+       missing apps launch into their homes
+```
 
 - In the editor, choose **Remember apps** before **Save as preset** or **Done**: each tile keeps the app that's in it now. **Keep homes**, where the editor starts, leaves the homes as they are, following their tiles as you reshape the layout; **Clear homes** removes them.
 - Or run `quilt home` on the focused window to make its tile that app's home (`quilt home 3` for tile 3; `quilt home 3 none` clears it).
