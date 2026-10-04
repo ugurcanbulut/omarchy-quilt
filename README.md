@@ -94,7 +94,7 @@ A useful ultrawide setup is what I call **Zen mode**: one normal-sized working r
 
 No fake spacer windows. No application-specific rules. The space around the window simply is not part of the layout.
 
-<p align="center"><img src="docs/zen-mode-screenshot.webp" alt="Zen mode on an ultrawide monitor: one large centered terminal tile with the surrounding workspace intentionally left empty" width="100%"></p>
+<p align="center"><img src="docs/zen-mode.png" alt="Zen mode on an ultrawide monitor: one large centered terminal tile with the surrounding workspace intentionally left empty" width="100%"></p>
 
 The editor can make this directly. Draw only the region you want, leave the rest of the grid blank, and save it like any other preset. The same idea works for asymmetric layouts and deliberate gaps between windows.
 
